@@ -26697,173 +26697,159 @@ const AlertsPageInline = ({ data, user, refresh, showToast }) => {
 
 // Progilift Sync Tab pour Settings
 const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
-    const [connectionStatus, setConnectionStatus] = useState('checking'); // checking, connected, error
-    const [syncing, setSyncing] = useState(false);
-    const [syncResult, setSyncResult] = useState(null);
-    const [syncLogs, setSyncLogs] = useState([]);
-    const [stats, setStats] = useState({ equipements: 0, pannes: 0, arret: 0, lastSync: null, lastSyncStatus: null });
-    const [apiUrl, setApiUrl] = useState(localStorage.getItem('progilift_api_url') || '');
+    const [apiUrl, setApiUrl] = useState(localStorage.getItem('progilift_api_url') || 'https://auv-asc-app.vercel.app');
+    const [isRunning, setIsRunning] = useState(false);
+    const [shouldStop, setShouldStop] = useState(false);
+    const [progress, setProgress] = useState({ percent: 0, text: 'En attente...' });
+    const [stats, setStats] = useState({ arrets: 0, equipements: 0, pannes: 0 });
+    const [logs, setLogs] = useState([{ time: new Date().toLocaleTimeString(), msg: 'Prêt à synchroniser...', type: 'info' }]);
+    const shouldStopRef = useRef(false);
     
-    // Charger les stats depuis les données et l'API
-    useEffect(() => {
-        const ascenseurs = data.progilift_ascenseurs || [];
-        const arretCount = ascenseurs.filter(a => a.en_arret === true || a.en_arret === 1 || a.en_arret === 't').length;
-        
-        setStats(prev => ({
-            ...prev,
-            equipements: ascenseurs.length,
-            arret: arretCount,
-            lastSync: localStorage.getItem('progilift_last_sync')
-        }));
-        
-        if (ascenseurs.length > 0) {
-            setConnectionStatus('connected');
-        }
-        
-        loadSyncLogs();
-        if (apiUrl) {
-            loadStatusFromApi();
-        }
-    }, [data.progilift_ascenseurs]);
+    // Fonction pour ajouter un log
+    const addLog = (msg, type = 'info') => {
+        const time = new Date().toLocaleTimeString();
+        setLogs(prev => [...prev, { time, msg, type }]);
+    };
     
-    // Charger le statut depuis l'API Vercel
-    const loadStatusFromApi = async () => {
-        if (!apiUrl) return;
+    // Fonction pour appeler l'API
+    const callApi = async (endpoint) => {
+        const baseUrl = apiUrl.replace(/\/$/, '');
+        const url = `${baseUrl}/api/sync${endpoint}`;
+        
+        const response = await fetch(url);
+        const text = await response.text();
+        
         try {
-            const response = await fetch(`${apiUrl}/api/status`);
-            const data = await response.json();
-            if (data.status === 'ok') {
-                setStats(prev => ({
-                    ...prev,
-                    equipements: data.totals?.equipements || prev.equipements,
-                    pannes: data.totals?.pannes || 0,
-                    arret: data.totals?.appareils_arret || prev.arret,
-                    lastSync: data.last_sync?.date || prev.lastSync,
-                    lastSyncStatus: data.last_sync?.status
-                }));
-                setConnectionStatus('connected');
-            }
+            return JSON.parse(text);
+        } catch {
+            throw new Error(`Invalid JSON: ${text.substring(0, 100)}`);
+        }
+    };
+    
+    // Vérifier le status
+    const checkStatus = async () => {
+        try {
+            addLog('Vérification du status...', 'info');
+            const data = await callApi('');
+            addLog(`Status: ${data.status} - ${data.sectors_count || 0} secteurs, ${data.periods_count || 0} périodes`, 'success');
+            showToast('Status vérifié avec succès', 'success');
         } catch (e) {
-            console.log('API status error:', e);
+            addLog(`Erreur: ${e.message}`, 'error');
+            showToast('Erreur: ' + e.message, 'error');
         }
     };
     
-    // Charger les logs de synchronisation
-    const loadSyncLogs = async () => {
-        const localLogs = JSON.parse(localStorage.getItem('progilift_sync_logs') || '[]');
+    // Synchronisation complète
+    const startFullSync = async () => {
+        if (isRunning) return;
         
-        // Essayer l'API Vercel d'abord
-        if (apiUrl) {
-            try {
-                const response = await fetch(`${apiUrl}/api/logs`);
-                const apiLogs = await response.json();
-                if (Array.isArray(apiLogs) && apiLogs.length > 0) {
-                    const allLogs = [...apiLogs];
-                    localLogs.forEach(localLog => {
-                        const exists = allLogs.some(l => Math.abs(new Date(l.sync_date) - new Date(localLog.sync_date)) < 60000);
-                        if (!exists) allLogs.push(localLog);
-                    });
-                    allLogs.sort((a, b) => new Date(b.sync_date) - new Date(a.sync_date));
-                    setSyncLogs(allLogs.slice(0, 30));
-                    return;
-                }
-            } catch (e) { /* fallback local */ }
-        }
+        setIsRunning(true);
+        shouldStopRef.current = false;
+        setShouldStop(false);
+        setStats({ arrets: 0, equipements: 0, pannes: 0 });
+        setLogs([]);
         
-        // Fallback BDD Supabase
-        try {
-            const { data: dbLogs, error } = await db.from('sync_logs').select('*').order('sync_date', { ascending: false }).limit(30);
-            if (!error && dbLogs && dbLogs.length > 0) {
-                const allLogs = [...dbLogs];
-                localLogs.forEach(localLog => {
-                    const exists = allLogs.some(l => Math.abs(new Date(l.sync_date) - new Date(localLog.sync_date)) < 60000);
-                    if (!exists) allLogs.push(localLog);
-                });
-                allLogs.sort((a, b) => new Date(b.sync_date) - new Date(a.sync_date));
-                setSyncLogs(allLogs.slice(0, 30));
-                return;
-            }
-        } catch (e) { /* fallback local */ }
-        
-        setSyncLogs(localLogs);
-    };
-    
-    // Sauvegarder et connecter
-    const saveAndConnect = async () => {
-        const url = apiUrl.trim().replace(/\/$/, '');
-        if (!url) {
-            showToast('Veuillez entrer l\'URL de l\'API', 'error');
-            return;
-        }
-        localStorage.setItem('progilift_api_url', url);
-        setApiUrl(url);
-        setConnectionStatus('checking');
-        
-        try {
-            await loadStatusFromApi();
-            await loadSyncLogs();
-            showToast('Connexion établie', 'success');
-        } catch (e) {
-            setConnectionStatus('error');
-            showToast('Erreur de connexion: ' + e.message, 'error');
-        }
-    };
-    
-    // Déclencher une sync
-    const triggerSync = async (fullSync = false) => {
-        if (!apiUrl) {
-            showToast('Veuillez d\'abord configurer l\'URL de l\'API', 'error');
-            return;
-        }
-        
-        setSyncing(true);
-        setSyncResult(null);
-        
+        let totalEquip = 0;
+        let totalPannes = 0;
+        let totalArrets = 0;
         const startTime = Date.now();
         
         try {
-            const endpoint = fullSync ? '/api/sync/full' : '/api/sync';
-            const response = await fetch(`${apiUrl}${endpoint}`, { method: 'POST' });
-            const data = await response.json();
+            // STEP 1: Arrêts
+            addLog('🔍 Étape 1: Synchronisation des appareils à l\'arrêt...', 'info');
+            setProgress({ percent: 5, text: 'Étape 1/3 - Arrêts' });
             
-            if (data.status === 'success' || data.status === 'partial') {
-                const syncLog = {
-                    id: Date.now(),
-                    sync_date: new Date().toISOString(),
-                    status: data.status,
-                    equipements_count: data.stats?.equipements || 0,
-                    pannes_count: data.stats?.pannes || 0,
-                    duration_seconds: data.duration || ((Date.now() - startTime) / 1000)
-                };
+            const step1 = await callApi('?step=1');
+            if (step1.status === 'error') throw new Error(step1.message);
+            
+            totalArrets = step1.arrets || 0;
+            setStats(prev => ({ ...prev, arrets: totalArrets }));
+            addLog(`✅ Arrêts: ${totalArrets} appareils`, 'success');
+            
+            if (shouldStopRef.current) throw new Error('Arrêt demandé');
+            
+            // STEP 2: Équipements
+            addLog('🔍 Étape 2: Synchronisation des équipements...', 'info');
+            let sectorIdx = 0;
+            let hasMoreSectors = true;
+            
+            while (hasMoreSectors && !shouldStopRef.current) {
+                setProgress({ percent: 10 + (sectorIdx * 3), text: `Étape 2/3 - Secteur ${sectorIdx + 1}` });
                 
-                // Sauvegarder localement
-                const localLogs = JSON.parse(localStorage.getItem('progilift_sync_logs') || '[]');
-                localLogs.unshift(syncLog);
-                localStorage.setItem('progilift_sync_logs', JSON.stringify(localLogs.slice(0, 50)));
-                localStorage.setItem('progilift_last_sync', new Date().toISOString());
+                const step2 = await callApi(`?step=2&sector=${sectorIdx}`);
+                if (step2.status === 'error') throw new Error(step2.message);
                 
-                setSyncResult({
-                    success: true,
-                    equipements: data.stats?.equipements || 0,
-                    pannes: data.stats?.pannes || 0,
-                    arret: data.stats?.appareils_arret || 0,
-                    duration: data.duration || ((Date.now() - startTime) / 1000)
-                });
+                if (step2.equipements) {
+                    totalEquip += step2.equipements;
+                    setStats(prev => ({ ...prev, equipements: totalEquip }));
+                    addLog(`✅ Secteur ${step2.sector || sectorIdx + 1}: ${step2.equipements} équipements`, 'success');
+                }
                 
-                showToast(`Synchronisation terminée: ${data.stats?.equipements || 0} équipements`, 'success');
+                if (step2.next && step2.next.includes('step=2')) {
+                    sectorIdx++;
+                } else {
+                    hasMoreSectors = false;
+                }
                 
-                // Rafraîchir
-                setTimeout(() => {
-                    refresh();
-                    loadSyncLogs();
-                    loadStatusFromApi();
-                }, 1000);
-            } else {
-                throw new Error(data.message || 'Erreur de synchronisation');
+                // Petite pause pour ne pas surcharger
+                await new Promise(r => setTimeout(r, 500));
             }
-        } catch (error) {
-            setSyncResult({ success: false, error: error.message });
-            showToast('Erreur: ' + error.message, 'error');
+            
+            if (shouldStopRef.current) throw new Error('Arrêt demandé');
+            
+            // STEP 3: Pannes
+            addLog('🔍 Étape 3: Synchronisation des pannes...', 'info');
+            let periodIdx = 0;
+            let hasMorePeriods = true;
+            
+            while (hasMorePeriods && !shouldStopRef.current) {
+                setProgress({ percent: 60 + (periodIdx * 5), text: `Étape 3/3 - Période ${periodIdx + 1}` });
+                
+                const step3 = await callApi(`?step=3&period=${periodIdx}`);
+                if (step3.status === 'error') throw new Error(step3.message);
+                
+                if (step3.pannes) {
+                    totalPannes += step3.pannes;
+                    setStats(prev => ({ ...prev, pannes: totalPannes }));
+                    addLog(`✅ Période ${step3.period || periodIdx + 1}: ${step3.pannes} pannes`, 'success');
+                }
+                
+                if (step3.next && step3.next.includes('step=3')) {
+                    periodIdx++;
+                } else {
+                    hasMorePeriods = false;
+                }
+                
+                await new Promise(r => setTimeout(r, 500));
+            }
+            
+            // Terminé !
+            const duration = Math.round((Date.now() - startTime) / 1000);
+            setProgress({ percent: 100, text: 'Terminé !' });
+            addLog(`🎉 SYNCHRONISATION TERMINÉE en ${duration}s`, 'success');
+            addLog(`📊 Total: ${totalArrets} arrêts, ${totalEquip} équipements, ${totalPannes} pannes`, 'success');
+            
+            // Sauvegarder le log
+            const syncLog = {
+                id: Date.now(),
+                sync_date: new Date().toISOString(),
+                status: 'success',
+                equipements_count: totalEquip,
+                pannes_count: totalPannes,
+                duration_seconds: duration
+            };
+            const localLogs = JSON.parse(localStorage.getItem('progilift_sync_logs') || '[]');
+            localLogs.unshift(syncLog);
+            localStorage.setItem('progilift_sync_logs', JSON.stringify(localLogs.slice(0, 50)));
+            localStorage.setItem('progilift_last_sync', new Date().toISOString());
+            
+            showToast(`Synchronisation terminée: ${totalEquip} équipements, ${totalPannes} pannes`, 'success');
+            refresh();
+            
+        } catch (e) {
+            addLog(`❌ Erreur: ${e.message}`, 'error');
+            setProgress({ percent: 0, text: 'Erreur' });
+            showToast('Erreur: ' + e.message, 'error');
             
             // Log erreur
             const localLogs = JSON.parse(localStorage.getItem('progilift_sync_logs') || '[]');
@@ -26871,289 +26857,143 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
                 id: Date.now(),
                 sync_date: new Date().toISOString(),
                 status: 'error',
-                error_message: error.message,
-                duration_seconds: (Date.now() - startTime) / 1000
+                error_message: e.message,
+                duration_seconds: Math.round((Date.now() - startTime) / 1000)
             });
             localStorage.setItem('progilift_sync_logs', JSON.stringify(localLogs.slice(0, 50)));
-        } finally {
-            setSyncing(false);
-            setTimeout(() => setSyncResult(null), 10000);
         }
+        
+        setIsRunning(false);
     };
     
-    // Formater la date relative
-    const formatRelativeTime = (dateStr) => {
-        if (!dateStr) return '--';
-        const date = new Date(dateStr);
-        const now = new Date();
-        const diff = Math.floor((now - date) / 1000 / 60);
-        
-        if (diff < 1) return 'À l\'instant';
-        if (diff < 60) return `Il y a ${diff} min`;
-        if (diff < 1440) return `Il y a ${Math.floor(diff / 60)}h`;
-        return date.toLocaleDateString('fr-FR');
+    // Arrêter la sync
+    const stopSync = () => {
+        shouldStopRef.current = true;
+        setShouldStop(true);
+        addLog('⏹️ Arrêt demandé...', 'warning');
     };
     
-    const glassStyle = { background: 'rgba(30, 41, 59, 0.5)', backdropFilter: 'blur(10px)', border: `1px solid rgba(51, 65, 85, 0.5)`, borderRadius: 16 };
-    const statCardStyle = { ...glassStyle, padding: 20, transition: 'all 0.2s' };
+    // Sauvegarder l'URL
+    const saveUrl = () => {
+        localStorage.setItem('progilift_api_url', apiUrl);
+        showToast('URL sauvegardée', 'success');
+    };
     
-    return h('div', { style: { background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)', margin: -24, padding: 24, minHeight: '100%', borderRadius: 12 } },
+    // Couleurs des logs
+    const logColors = {
+        info: '#2196F3',
+        success: '#4CAF50',
+        error: '#f44336',
+        warning: '#ff9800'
+    };
+    
+    return h('div', { style: { 
+        background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)', 
+        margin: -24, padding: 24, minHeight: '100%', borderRadius: 12, color: 'white'
+    } },
         
-        // Header avec badge connexion
-        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 } },
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: 12 } },
-                h('div', { style: { width: 40, height: 40, borderRadius: 12, background: 'linear-gradient(135deg, #3B82F6 0%, #8B5CF6 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
-                    h('span', { style: { fontSize: 18 } }, '🛗')
-                ),
-                h('div', null,
-                    h('div', { style: { fontSize: 18, fontWeight: 700, color: 'white' } }, 'Progilift Sync'),
-                    h('div', { style: { fontSize: 12, color: '#94A3B8' } }, 'Synchronisation automatique')
-                )
-            ),
-            h('div', { style: { 
-                display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', borderRadius: 20,
-                background: 'rgba(51, 65, 85, 0.5)', fontSize: 13
-            } },
-                h('span', { style: { 
-                    width: 8, height: 8, borderRadius: '50%',
-                    background: connectionStatus === 'connected' ? '#10B981' : connectionStatus === 'error' ? '#EF4444' : '#EAB308',
-                    animation: connectionStatus === 'checking' ? 'pulse 2s infinite' : 'none'
-                } }),
-                h('span', { style: { color: connectionStatus === 'connected' ? '#10B981' : connectionStatus === 'error' ? '#EF4444' : '#EAB308' } },
-                    connectionStatus === 'connected' ? 'Connecté' : connectionStatus === 'error' ? 'Erreur' : 'Connexion...'
-                )
-            )
-        ),
+        // Header
+        h('h2', { style: { textAlign: 'center', marginBottom: 24, fontSize: 24 } }, '🔄 Progilift Sync'),
         
         // Configuration
-        h('div', { style: { ...glassStyle, padding: 20, marginBottom: 20 } },
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, color: '#94A3B8' } },
-                h('span', null, '⚙️'),
-                h('span', { style: { fontWeight: 600, color: 'white' } }, 'Configuration')
-            ),
+        h('div', { style: { background: 'rgba(255,255,255,0.1)', borderRadius: 12, padding: 20, marginBottom: 20 } },
+            h('label', { style: { display: 'block', marginBottom: 8, fontSize: 14, opacity: 0.8 } }, 'URL de l\'API Vercel'),
             h('div', { style: { display: 'flex', gap: 12 } },
                 h('input', {
                     type: 'text',
                     value: apiUrl,
                     onChange: e => setApiUrl(e.target.value),
-                    placeholder: 'URL de l\'API Vercel (ex: https://mon-projet.vercel.app)',
+                    placeholder: 'https://votre-app.vercel.app',
                     style: { 
-                        flex: 1, padding: '12px 16px', background: '#1E293B', border: '1px solid #334155',
-                        borderRadius: 12, color: 'white', fontSize: 14, outline: 'none'
+                        flex: 1, padding: 12, border: 'none', borderRadius: 8,
+                        background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: 14
                     }
                 }),
                 h('button', {
-                    onClick: saveAndConnect,
+                    onClick: saveUrl,
                     style: { 
-                        padding: '12px 20px', background: '#3B82F6', color: 'white', border: 'none',
-                        borderRadius: 12, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8
+                        padding: '12px 20px', background: '#2196F3', color: 'white',
+                        border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600
                     }
-                }, '🔌 Connecter')
+                }, '💾 Sauver')
             )
         ),
         
-        // Stats Grid
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 20 } },
-            // Équipements
-            h('div', { style: statCardStyle },
-                h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 } },
-                    h('div', { style: { width: 40, height: 40, borderRadius: 12, background: 'rgba(59, 130, 246, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
-                        h('span', { style: { color: '#60A5FA' } }, '🏢')
-                    ),
-                    h('span', { style: { fontSize: 10, color: '#64748B', textTransform: 'uppercase', letterSpacing: 1 } }, 'Total')
-                ),
-                h('div', { style: { fontSize: 28, fontWeight: 700, color: 'white', marginBottom: 4 } }, stats.equipements.toLocaleString()),
-                h('div', { style: { fontSize: 13, color: '#94A3B8' } }, 'Équipements')
+        // Boutons
+        h('div', { style: { textAlign: 'center', marginBottom: 20 } },
+            h('button', {
+                onClick: startFullSync,
+                disabled: isRunning,
+                style: { 
+                    padding: '15px 30px', background: isRunning ? '#666' : '#4CAF50', color: 'white',
+                    border: 'none', borderRadius: 8, fontSize: 16, fontWeight: 600,
+                    cursor: isRunning ? 'not-allowed' : 'pointer', margin: 5,
+                    transition: 'all 0.3s'
+                }
+            }, '🚀 Lancer la Synchronisation Complète'),
+            
+            h('button', {
+                onClick: checkStatus,
+                disabled: isRunning,
+                style: { 
+                    padding: '15px 30px', background: '#2196F3', color: 'white',
+                    border: 'none', borderRadius: 8, fontSize: 16, fontWeight: 600,
+                    cursor: 'pointer', margin: 5, transition: 'all 0.3s'
+                }
+            }, '📊 Vérifier Status'),
+            
+            isRunning && h('button', {
+                onClick: stopSync,
+                style: { 
+                    padding: '15px 30px', background: '#f44336', color: 'white',
+                    border: 'none', borderRadius: 8, fontSize: 16, fontWeight: 600,
+                    cursor: 'pointer', margin: 5, transition: 'all 0.3s'
+                }
+            }, '⏹️ Arrêter')
+        ),
+        
+        // Progression
+        h('div', { style: { background: 'rgba(255,255,255,0.1)', borderRadius: 12, padding: 20, marginBottom: 20 } },
+            h('div', { style: { fontSize: 18, marginBottom: 15 } }, '📈 Progression'),
+            h('div', { style: { height: 20, background: 'rgba(255,255,255,0.2)', borderRadius: 10, overflow: 'hidden', marginBottom: 15 } },
+                h('div', { style: { 
+                    height: '100%', width: `${progress.percent}%`,
+                    background: 'linear-gradient(90deg, #4CAF50, #8BC34A)',
+                    borderRadius: 10, transition: 'width 0.3s',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 12, fontWeight: 'bold'
+                } }, `${progress.percent}%`)
             ),
-            // Pannes
-            h('div', { style: statCardStyle },
-                h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 } },
-                    h('div', { style: { width: 40, height: 40, borderRadius: 12, background: 'rgba(249, 115, 22, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
-                        h('span', { style: { color: '#FB923C' } }, '🔧')
-                    ),
-                    h('span', { style: { fontSize: 10, color: '#64748B', textTransform: 'uppercase', letterSpacing: 1 } }, 'Total')
-                ),
-                h('div', { style: { fontSize: 28, fontWeight: 700, color: 'white', marginBottom: 4 } }, stats.pannes.toLocaleString()),
-                h('div', { style: { fontSize: 13, color: '#94A3B8' } }, 'Pannes')
+            h('div', { style: { textAlign: 'center', opacity: 0.8 } }, progress.text)
+        ),
+        
+        // Stats
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 15, marginBottom: 20 } },
+            h('div', { style: { background: 'rgba(255,255,255,0.1)', borderRadius: 8, padding: 15, textAlign: 'center' } },
+                h('div', { style: { fontSize: '2em', fontWeight: 'bold', color: '#f44336' } }, stats.arrets),
+                h('div', { style: { fontSize: 12, opacity: 0.7, marginTop: 5 } }, 'Appareils arrêtés')
             ),
-            // À l'arrêt
-            h('div', { style: statCardStyle },
-                h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 } },
-                    h('div', { style: { width: 40, height: 40, borderRadius: 12, background: 'rgba(239, 68, 68, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
-                        h('span', { style: { color: '#F87171' } }, '⚠️')
-                    ),
-                    h('span', { style: { fontSize: 10, color: '#64748B', textTransform: 'uppercase', letterSpacing: 1 } }, 'En cours')
-                ),
-                h('div', { style: { fontSize: 28, fontWeight: 700, color: '#F87171', marginBottom: 4 } }, stats.arret),
-                h('div', { style: { fontSize: 13, color: '#94A3B8' } }, 'À l\'arrêt')
+            h('div', { style: { background: 'rgba(255,255,255,0.1)', borderRadius: 8, padding: 15, textAlign: 'center' } },
+                h('div', { style: { fontSize: '2em', fontWeight: 'bold', color: '#4CAF50' } }, stats.equipements),
+                h('div', { style: { fontSize: 12, opacity: 0.7, marginTop: 5 } }, 'Équipements')
             ),
-            // Dernière sync
-            h('div', { style: statCardStyle },
-                h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 } },
-                    h('div', { style: { width: 40, height: 40, borderRadius: 12, background: 'rgba(16, 185, 129, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
-                        h('span', { style: { color: '#34D399' } }, '🕐')
-                    ),
-                    stats.lastSyncStatus && h('span', { style: { 
-                        fontSize: 10, padding: '2px 8px', borderRadius: 10,
-                        background: stats.lastSyncStatus === 'success' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)',
-                        color: stats.lastSyncStatus === 'success' ? '#34D399' : '#F87171'
-                    } }, stats.lastSyncStatus === 'success' ? 'OK' : 'Erreur')
-                ),
-                h('div', { style: { fontSize: 20, fontWeight: 700, color: 'white', marginBottom: 4 } }, formatRelativeTime(stats.lastSync)),
-                h('div', { style: { fontSize: 13, color: '#94A3B8' } }, 'Dernière sync')
+            h('div', { style: { background: 'rgba(255,255,255,0.1)', borderRadius: 8, padding: 15, textAlign: 'center' } },
+                h('div', { style: { fontSize: '2em', fontWeight: 'bold', color: '#ff9800' } }, stats.pannes),
+                h('div', { style: { fontSize: 12, opacity: 0.7, marginTop: 5 } }, 'Pannes')
             )
         ),
         
-        // Synchronisation
-        h('div', { style: { ...glassStyle, padding: 20, marginBottom: 20 } },
-            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 } },
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-                    h('span', { style: { color: '#60A5FA' } }, '🔄'),
-                    h('span', { style: { fontWeight: 600, color: 'white' } }, 'Synchronisation')
-                ),
-                h('div', { style: { fontSize: 12, color: '#64748B', display: 'flex', alignItems: 'center', gap: 6 } },
-                    h('span', { style: { width: 6, height: 6, borderRadius: '50%', background: '#10B981' } }),
-                    'Auto-refresh actif'
-                )
-            ),
-            
-            // Boutons
-            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 } },
-                h('button', {
-                    onClick: () => triggerSync(false),
-                    disabled: syncing,
-                    style: { 
-                        padding: '16px 24px', 
-                        background: 'linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)',
-                        color: 'white', border: 'none', borderRadius: 12, cursor: syncing ? 'not-allowed' : 'pointer',
-                        opacity: syncing ? 0.5 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12,
-                        transition: 'all 0.2s'
-                    }
-                },
-                    h('span', { style: { fontSize: 18 } }, '🔄'),
-                    h('div', { style: { textAlign: 'left' } },
-                        h('div', { style: { fontWeight: 600 } }, 'Sync Incrémentale'),
-                        h('div', { style: { fontSize: 11, opacity: 0.8 } }, 'Uniquement les modifications')
-                    )
-                ),
-                h('button', {
-                    onClick: () => triggerSync(true),
-                    disabled: syncing,
-                    style: { 
-                        padding: '16px 24px', 
-                        background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
-                        color: 'white', border: 'none', borderRadius: 12, cursor: syncing ? 'not-allowed' : 'pointer',
-                        opacity: syncing ? 0.5 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12,
-                        transition: 'all 0.2s'
-                    }
-                },
-                    h('span', { style: { fontSize: 18 } }, '📦'),
-                    h('div', { style: { textAlign: 'left' } },
-                        h('div', { style: { fontWeight: 600 } }, 'Sync Complète'),
-                        h('div', { style: { fontSize: 11, opacity: 0.8 } }, 'Toutes les données (~3-5 min)')
-                    )
-                )
-            ),
-            
-            // Progress
-            syncing && h('div', { style: { padding: 16, background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 12 } },
-                h('div', { style: { width: 20, height: 20, border: '2px solid #60A5FA', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' } }),
-                h('div', null,
-                    h('div', { style: { color: '#93C5FD', fontWeight: 500 } }, 'Synchronisation en cours...'),
-                    h('div', { style: { fontSize: 12, color: '#60A5FA', marginTop: 4 } }, 'Veuillez patienter, cela peut prendre plusieurs minutes')
-                )
-            ),
-            
-            // Result
-            syncResult && h('div', { style: { 
-                padding: 16, borderRadius: 12,
-                background: syncResult.success ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                border: `1px solid ${syncResult.success ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`
+        // Logs
+        h('div', { style: { background: 'rgba(255,255,255,0.1)', borderRadius: 12, padding: 20 } },
+            h('div', { style: { fontSize: 18, marginBottom: 15 } }, '📝 Logs'),
+            h('div', { style: { 
+                background: '#000', borderRadius: 8, padding: 15,
+                maxHeight: 300, overflowY: 'auto', fontFamily: 'monospace', fontSize: 13
             } },
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: 12 } },
-                    h('div', { style: { 
-                        width: 40, height: 40, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        background: syncResult.success ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'
-                    } },
-                        h('span', null, syncResult.success ? '✓' : '✗')
-                    ),
-                    h('div', null,
-                        h('div', { style: { fontWeight: 500, color: syncResult.success ? '#34D399' : '#F87171' } }, 
-                            syncResult.success ? 'Synchronisation terminée !' : 'Erreur de synchronisation'
-                        ),
-                        syncResult.success ? 
-                            h('div', { style: { fontSize: 13, color: syncResult.success ? '#6EE7B7' : '#FCA5A5', marginTop: 4 } },
-                                `${syncResult.equipements} équipements • ${syncResult.pannes} pannes • ${syncResult.arret} à l'arrêt • ${syncResult.duration?.toFixed(1)}s`
-                            ) :
-                            h('div', { style: { fontSize: 13, color: '#FCA5A5', marginTop: 4 } }, syncResult.error)
-                    )
-                )
-            )
-        ),
-        
-        // Historique
-        h('div', { style: { ...glassStyle, padding: 20 } },
-            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 } },
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-                    h('span', { style: { color: '#A78BFA' } }, '📜'),
-                    h('span', { style: { fontWeight: 600, color: 'white' } }, 'Historique des synchronisations')
-                ),
-                h('button', { 
-                    onClick: loadSyncLogs,
-                    style: { padding: 8, background: 'transparent', border: 'none', cursor: 'pointer', color: '#94A3B8', borderRadius: 8 }
-                }, '🔄')
-            ),
-            
-            h('div', { style: { maxHeight: 380, overflowY: 'auto' } },
-                syncLogs.length === 0 ?
-                    h('div', { style: { textAlign: 'center', padding: 48, color: '#64748B' } },
-                        h('div', { style: { fontSize: 40, marginBottom: 12 } }, '📭'),
-                        h('div', null, 'Aucun historique disponible')
-                    ) :
-                    syncLogs.map((log, index) => {
-                        const date = new Date(log.sync_date);
-                        const isSuccess = log.status === 'success';
-                        const isPartial = log.status === 'partial';
-                        
-                        return h('div', { 
-                            key: log.id || index,
-                            style: { 
-                                display: 'flex', alignItems: 'center', gap: 16, padding: 12, borderRadius: 12,
-                                background: index === 0 ? 'rgba(51, 65, 85, 0.3)' : 'transparent',
-                                marginBottom: 8, transition: 'background 0.2s'
-                            }
-                        },
-                            h('div', { style: { 
-                                width: 40, height: 40, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                background: isSuccess ? 'rgba(16, 185, 129, 0.2)' : isPartial ? 'rgba(234, 179, 8, 0.2)' : 'rgba(239, 68, 68, 0.2)'
-                            } },
-                                h('span', { style: { color: isSuccess ? '#34D399' : isPartial ? '#FBBF24' : '#F87171' } }, 
-                                    isSuccess ? '✓' : isPartial ? '!' : '✗'
-                                )
-                            ),
-                            h('div', { style: { flex: 1, minWidth: 0 } },
-                                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-                                    h('span', { style: { fontWeight: 500, color: 'white' } }, date.toLocaleDateString('fr-FR')),
-                                    h('span', { style: { color: '#64748B' } }, date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })),
-                                    index === 0 && h('span', { style: { fontSize: 10, padding: '2px 8px', borderRadius: 10, background: 'rgba(59, 130, 246, 0.2)', color: '#60A5FA' } }, 'Dernière')
-                                ),
-                                h('div', { style: { fontSize: 13, color: '#94A3B8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
-                                    `${log.equipements_count || 0} équip. • ${log.pannes_count || 0} pannes • ${log.duration_seconds?.toFixed(1) || '?'}s`,
-                                    log.error_message && h('span', { style: { color: '#F87171', marginLeft: 8 } }, `• ${log.error_message.substring(0, 50)}...`)
-                                )
-                            )
-                        );
-                    })
-            )
-        ),
-        
-        // Footer info
-        h('div', { style: { marginTop: 20, padding: 16, background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.2)', borderRadius: 12, display: 'flex', alignItems: 'flex-start', gap: 12 } },
-            h('span', { style: { fontSize: 18 } }, 'ℹ️'),
-            h('div', { style: { fontSize: 13, color: '#93C5FD' } },
-                h('strong', null, 'Configuration: '),
-                'Entrez l\'URL de votre API Vercel (ex: https://progilift-sync.vercel.app) et cliquez sur Connecter. ',
-                'La synchronisation automatique s\'effectue toutes les heures via le cron job Vercel.'
+                logs.map((log, idx) => h('div', { 
+                    key: idx, 
+                    style: { marginBottom: 5, color: logColors[log.type] || '#fff' }
+                }, `[${log.time}] ${log.msg}`))
             )
         )
     );
