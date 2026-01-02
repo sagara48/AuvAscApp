@@ -1,42 +1,17 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "api/*.py",
-      "use": "@vercel/python",
-      "config": {
-        "maxLambdaSize": "15mb"
-      }
-    },
-    {
-      "src": "public/**",
-      "use": "@vercel/static"
-    }
+  "rewrites": [
+    { "source": "/api/sync/full", "destination": "/api/sync" },
+    { "source": "/", "destination": "/public/index.html" }
   ],
-  "routes": [
+  "headers": [
     {
-      "src": "/api/sync/full",
-      "dest": "/api/sync.py"
-    },
-    {
-      "src": "/api/sync",
-      "dest": "/api/sync.py"
-    },
-    {
-      "src": "/api/status",
-      "dest": "/api/status.py"
-    },
-    {
-      "src": "/api/logs",
-      "dest": "/api/logs.py"
-    },
-    {
-      "src": "/api/cron",
-      "dest": "/api/cron.py"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/public/$1"
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization" }
+      ]
     }
   ],
   "crons": [
