@@ -1,0 +1,32 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/*.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "public/**",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    { "src": "/api/sync", "dest": "/api/sync.py" },
+    { "src": "/api/sync/full", "dest": "/api/sync.py" },
+    { "src": "/api/status", "dest": "/api/status.py" },
+    { "src": "/api/logs", "dest": "/api/logs.py" },
+    { "src": "/(.*)", "dest": "/public/$1" }
+  ],
+  "functions": {
+    "api/sync.py": {
+      "maxDuration": 300,
+      "memory": 1024
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/sync",
+      "schedule": "0 * * * *"
+    }
+  ]
+}
