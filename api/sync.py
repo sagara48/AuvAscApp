@@ -1,6 +1,6 @@
 """
-Progilift Sync - Version COMPLETE
-Stocke toutes les données brutes en JSON
+Progilift Sync - Version COMPLETE avec mapping corrigé
+Les champs DIV1-DIV15 sont génériques (varient selon le type d'équipement)
 """
 
 import os
@@ -118,7 +118,6 @@ class ProgiliftClient:
         return self.sectors
     
     def get_wsoucont(self):
-        """Récupère Wsoucont (données de base équipements)"""
         items = []
         for sector in self.sectors:
             resp = self._call("get_Synchro_Wsoucont", {"dhDerniereMajFichier": "2000-01-01T00:00:00", "sListeSecteursTechnicien": sector}, timeout=120)
@@ -126,7 +125,6 @@ class ProgiliftClient:
         return items
     
     def get_wsoucont2(self):
-        """Récupère Wsoucont2 (données étendues + 10 derniers passages)"""
         items = []
         for sector in self.sectors:
             resp = self._call("get_Synchro_Wsoucont2", {"dhDerniereMajFichier": "2000-01-01T00:00:00", "sListeSecteursTechnicien": sector}, timeout=120)
@@ -134,7 +132,6 @@ class ProgiliftClient:
         return items
     
     def get_pannes(self):
-        """Récupère toutes les pannes par périodes"""
         all_pannes = []
         seen = set()
         periods = [
@@ -155,18 +152,6 @@ class ProgiliftClient:
     def get_appareils_arret(self):
         resp = self._call("get_AppareilsArret", {})
         return self._parse(resp, "tabListeArrets")
-    
-    def get_clients(self):
-        resp = self._call("get_Synchro_Wclient", {"dhDerniereMajFichier": "2000-01-01T00:00:00"})
-        return self._parse(resp, "tabListeClient")
-    
-    def get_contrats(self):
-        resp = self._call("get_Synchro_Wcontrat", {"dhDerniereMajFichier": "2000-01-01T00:00:00"})
-        return self._parse(resp, "tabListeWcontrat")
-    
-    def get_techniciens(self):
-        resp = self._call("get_Synchro_Wtech", {"dhDerniereMajFichier": "2000-01-01T00:00:00"})
-        return self._parse(resp, "tabListeTech")
 
 def run_sync(full_sync=False):
     start = datetime.now()
@@ -187,10 +172,9 @@ def run_sync(full_sync=False):
         wsoucont = pg.get_wsoucont()
         wsoucont2 = pg.get_wsoucont2()
         
-        # Créer un dict pour fusionner
         equip_map = {}
         
-        # D'abord Wsoucont (données de base)
+        # Wsoucont (données de base)
         for e in wsoucont:
             id_ws = safe_int(e.get('IDWSOUCONT'))
             if id_ws:
@@ -200,36 +184,79 @@ def run_sync(full_sync=False):
                     'secteur': safe_str(e.get('SECTEUR'), 20),
                     'ascenseur': safe_str(e.get('ASCENSEUR'), 50),
                     'indice': safe_str(e.get('INDICE'), 20),
-                    'adresse': safe_str(e.get('DES2'), 200),
-                    'ville': safe_str(e.get('DES3'), 200),
-                    'code_postal': safe_str(e.get('DES4'), 10),
                     'genre': safe_int(e.get('GENRE')),
                     'type_appareil': safe_int(e.get('TYPE')),
-                    'marque': safe_str(e.get('DIV1'), 100),
-                    'modele': safe_str(e.get('DIV2'), 100),
-                    'num_serie': safe_str(e.get('DIV3'), 100),
-                    'etage_desserte': safe_str(e.get('DIV4'), 50),
-                    'annee_install': safe_int(e.get('DIV5')),
-                    'charge': safe_str(e.get('DIV6'), 50),
-                    'vitesse': safe_str(e.get('DIV7'), 50),
-                    'nb_arrets': safe_int(e.get('NBARRET')),
-                    'nb_portes': safe_int(e.get('NBPORTES')),
+                    # Adresse
+                    'adresse': safe_str(e.get('DES2'), 200),
+                    'ville': safe_str(e.get('DES3'), 200),
+                    'des4': safe_str(e.get('DES4'), 200),
+                    'des6': safe_str(e.get('DES6'), 200),
+                    'des7': safe_str(e.get('DES7'), 200),
+                    # Champs DIV génériques
+                    'div1': safe_str(e.get('DIV1'), 100),
+                    'div2': safe_str(e.get('DIV2'), 100),
+                    'div3': safe_str(e.get('DIV3'), 100),
+                    'div4': safe_str(e.get('DIV4'), 100),
+                    'div5': safe_str(e.get('DIV5'), 100),
+                    'div6': safe_str(e.get('DIV6'), 100),
+                    'div7': safe_str(e.get('DIV7'), 100),
+                    'div8': safe_str(e.get('DIV8'), 100),
+                    'div9': safe_str(e.get('DIV9'), 100),
+                    'div10': safe_str(e.get('DIV10'), 100),
+                    'div11': safe_str(e.get('DIV11'), 200),
+                    'div12': safe_str(e.get('DIV12'), 200),
+                    'div13': safe_str(e.get('DIV13'), 200),
+                    'div14': safe_str(e.get('DIV14'), 200),
+                    'div15': safe_str(e.get('DIV15'), 200),
+                    'div16': safe_str(e.get('DIV16'), 200),
+                    'div17': safe_str(e.get('DIV17'), 200),
+                    'div18': safe_str(e.get('DIV18'), 200),
+                    'div19': safe_str(e.get('DIV19'), 200),
+                    'div20': safe_str(e.get('DIV20'), 200),
+                    # Autres champs
+                    'refcli': safe_str(e.get('REFCLI'), 50),
+                    'refcli2': safe_str(e.get('REFCLI2'), 50),
+                    'refcli3': safe_str(e.get('REFCLI3'), 50),
+                    'numappcli': safe_str(e.get('NUMAPPCLI'), 50),
+                    'nom_convivial': safe_str(e.get('NOM_CONVIVIAL'), 100),
+                    'localisation': safe_str(e.get('LOCALISATION'), 200),
+                    'telcabine': safe_str(e.get('TELCABINE'), 50),
+                    'idtype_depannage': safe_int(e.get('IDTYPE_DEPANNAGE')),
+                    'securite': safe_int(e.get('SECURITE')),
+                    'securite2': safe_int(e.get('SECURITE2')),
+                    'typeplanning': safe_str(e.get('TYPEPLANNING'), 50),
+                    'wordre': safe_int(e.get('WORDRE')),
+                    'ordre2': safe_int(e.get('ORDRE2')),
+                    'code_acquittement': safe_str(e.get('CODE_ACQUITTEMENT'), 50),
+                    'date_heure_modif': safe_str(e.get('DATE_HEURE_MODIF'), 30),
+                    # Planning mensuel
+                    'jan': safe_int(e.get('JAN')),
+                    'fev': safe_int(e.get('FEV')),
+                    'mar': safe_int(e.get('MAR')),
+                    'avr': safe_int(e.get('AVR')),
+                    'mai': safe_int(e.get('MAI')),
+                    'jui': safe_int(e.get('JUI')),
+                    'jul': safe_int(e.get('JUL')),
+                    'aou': safe_int(e.get('AOU')),
+                    'sep': safe_int(e.get('SEP')),
+                    'oct': safe_int(e.get('OCT')),
+                    'nov': safe_int(e.get('NOV')),
+                    'dec': safe_int(e.get('DEC')),
+                    # JSON complet
                     'data_wsoucont': json.dumps(e),
                     'updated_at': datetime.now().isoformat()
                 }
         
-        # Puis Wsoucont2 (10 derniers passages)
+        # Wsoucont2 (10 derniers passages)
         for e in wsoucont2:
             id_ws = safe_int(e.get('IDWSOUCONT'))
             if id_ws:
                 if id_ws in equip_map:
-                    # Ajouter les passages
                     for i in range(1, 11):
                         equip_map[id_ws][f'lib{i}'] = safe_str(e.get(f'LIB{i}'), 100)
                         equip_map[id_ws][f'datepass{i}'] = safe_int(e.get(f'DATEPASS{i}'))
                     equip_map[id_ws]['data_wsoucont2'] = json.dumps(e)
                 else:
-                    # Créer l'entrée
                     equip_map[id_ws] = {
                         'id_wsoucont': id_ws,
                         'id_wcontrat': safe_int(e.get('IDWCONTRAT')),
@@ -248,7 +275,7 @@ def run_sync(full_sync=False):
         stats["equipements"] = len(records)
         
         # =====================================================================
-        # PANNES - Toutes les données
+        # PANNES
         # =====================================================================
         pannes = pg.get_pannes()
         records = []
@@ -267,7 +294,7 @@ def run_sync(full_sync=False):
                 'cause': safe_int(p.get('CAUSE')),
                 'motif': safe_str(p.get('MOTIF'), 100),
                 'note': safe_str(p.get('NOTE2'), 500),
-                'data': json.dumps(p),  # TOUTES les données brutes
+                'data': json.dumps(p),
                 'updated_at': datetime.now().isoformat()
             }
             if r['id_panne']:
