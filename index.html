@@ -26699,525 +26699,461 @@ const AlertsPageInline = ({ data, user, refresh, showToast }) => {
 const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
     const [connectionStatus, setConnectionStatus] = useState('checking'); // checking, connected, error
     const [syncing, setSyncing] = useState(false);
-    const [syncProgress, setSyncProgress] = useState(null);
+    const [syncResult, setSyncResult] = useState(null);
     const [syncLogs, setSyncLogs] = useState([]);
-    const [stats, setStats] = useState({ equipements: 0, pannes: 0, arret: 0, lastSync: null });
-    const [progiliftConfig, setProgiliftConfig] = useState({
-        soapUrl: localStorage.getItem('progilift_soap_url') || '',
-        soapUsername: localStorage.getItem('progilift_soap_username') || '',
-        soapPassword: localStorage.getItem('progilift_soap_password') || '',
-        apiEndpoint: localStorage.getItem('progilift_api_endpoint') || '/api/sync'
-    });
-    const [showConfig, setShowConfig] = useState(false);
+    const [stats, setStats] = useState({ equipements: 0, pannes: 0, arret: 0, lastSync: null, lastSyncStatus: null });
+    const [apiUrl, setApiUrl] = useState(localStorage.getItem('progilift_api_url') || '');
     
-    // Charger les stats depuis les données
+    // Charger les stats depuis les données et l'API
     useEffect(() => {
         const ascenseurs = data.progilift_ascenseurs || [];
         const arretCount = ascenseurs.filter(a => a.en_arret === true || a.en_arret === 1 || a.en_arret === 't').length;
         
-        setStats({
+        setStats(prev => ({
+            ...prev,
             equipements: ascenseurs.length,
-            pannes: 0, // À calculer depuis les données pannes si disponibles
             arret: arretCount,
             lastSync: localStorage.getItem('progilift_last_sync')
-        });
+        }));
         
-        // Vérifier la connexion
         if (ascenseurs.length > 0) {
             setConnectionStatus('connected');
-        } else {
-            setConnectionStatus('checking');
         }
         
-        // Charger les logs de sync
         loadSyncLogs();
+        if (apiUrl) {
+            loadStatusFromApi();
+        }
     }, [data.progilift_ascenseurs]);
     
-    // Charger les logs de synchronisation (localStorage prioritaire + BDD optionnelle)
-    const loadSyncLogs = async () => {
-        // Toujours charger les logs locaux d'abord
-        const localLogs = JSON.parse(localStorage.getItem('progilift_sync_logs') || '[]');
-        
-        // Essayer de récupérer aussi les logs de la BDD
+    // Charger le statut depuis l'API Vercel
+    const loadStatusFromApi = async () => {
+        if (!apiUrl) return;
         try {
-            const { data: dbLogs, error } = await db.from('sync_logs').select('*').order('sync_date', { ascending: false }).limit(20);
-            if (!error && dbLogs && dbLogs.length > 0) {
-                // Fusionner les logs locaux et BDD, dédupliquer par date
-                const allLogs = [...localLogs];
-                dbLogs.forEach(dbLog => {
-                    const exists = allLogs.some(l => 
-                        Math.abs(new Date(l.sync_date) - new Date(dbLog.sync_date)) < 60000 // Même minute
-                    );
-                    if (!exists) {
-                        allLogs.push(dbLog);
-                    }
-                });
-                // Trier par date décroissante
-                allLogs.sort((a, b) => new Date(b.sync_date) - new Date(a.sync_date));
-                setSyncLogs(allLogs.slice(0, 50));
-            } else {
-                setSyncLogs(localLogs);
+            const response = await fetch(`${apiUrl}/api/status`);
+            const data = await response.json();
+            if (data.status === 'ok') {
+                setStats(prev => ({
+                    ...prev,
+                    equipements: data.totals?.equipements || prev.equipements,
+                    pannes: data.totals?.pannes || 0,
+                    arret: data.totals?.appareils_arret || prev.arret,
+                    lastSync: data.last_sync?.date || prev.lastSync,
+                    lastSyncStatus: data.last_sync?.status
+                }));
+                setConnectionStatus('connected');
             }
         } catch (e) {
-            // Table n'existe pas, utiliser uniquement localStorage
-            console.log('Table sync_logs non disponible, utilisation localStorage');
-            setSyncLogs(localLogs);
+            console.log('API status error:', e);
         }
     };
     
-    // Sauvegarder la configuration
-    const saveConfig = () => {
-        localStorage.setItem('progilift_soap_url', progiliftConfig.soapUrl);
-        localStorage.setItem('progilift_soap_username', progiliftConfig.soapUsername);
-        localStorage.setItem('progilift_soap_password', progiliftConfig.soapPassword);
-        localStorage.setItem('progilift_api_endpoint', progiliftConfig.apiEndpoint);
-        showToast('Configuration Progilift sauvegardée', 'success');
-        setShowConfig(false);
+    // Charger les logs de synchronisation
+    const loadSyncLogs = async () => {
+        const localLogs = JSON.parse(localStorage.getItem('progilift_sync_logs') || '[]');
+        
+        // Essayer l'API Vercel d'abord
+        if (apiUrl) {
+            try {
+                const response = await fetch(`${apiUrl}/api/logs`);
+                const apiLogs = await response.json();
+                if (Array.isArray(apiLogs) && apiLogs.length > 0) {
+                    const allLogs = [...apiLogs];
+                    localLogs.forEach(localLog => {
+                        const exists = allLogs.some(l => Math.abs(new Date(l.sync_date) - new Date(localLog.sync_date)) < 60000);
+                        if (!exists) allLogs.push(localLog);
+                    });
+                    allLogs.sort((a, b) => new Date(b.sync_date) - new Date(a.sync_date));
+                    setSyncLogs(allLogs.slice(0, 30));
+                    return;
+                }
+            } catch (e) { /* fallback local */ }
+        }
+        
+        // Fallback BDD Supabase
+        try {
+            const { data: dbLogs, error } = await db.from('sync_logs').select('*').order('sync_date', { ascending: false }).limit(30);
+            if (!error && dbLogs && dbLogs.length > 0) {
+                const allLogs = [...dbLogs];
+                localLogs.forEach(localLog => {
+                    const exists = allLogs.some(l => Math.abs(new Date(l.sync_date) - new Date(localLog.sync_date)) < 60000);
+                    if (!exists) allLogs.push(localLog);
+                });
+                allLogs.sort((a, b) => new Date(b.sync_date) - new Date(a.sync_date));
+                setSyncLogs(allLogs.slice(0, 30));
+                return;
+            }
+        } catch (e) { /* fallback local */ }
+        
+        setSyncLogs(localLogs);
     };
     
-    // Tester la connexion
-    const testConnection = async () => {
+    // Sauvegarder et connecter
+    const saveAndConnect = async () => {
+        const url = apiUrl.trim().replace(/\/$/, '');
+        if (!url) {
+            showToast('Veuillez entrer l\'URL de l\'API', 'error');
+            return;
+        }
+        localStorage.setItem('progilift_api_url', url);
+        setApiUrl(url);
         setConnectionStatus('checking');
         
         try {
-            // Essayer de charger quelques ascenseurs pour vérifier la connexion
-            const { data: testData, error } = await db.from('progilift_ascenseurs').select('id').limit(1);
-            
-            if (error) {
-                setConnectionStatus('error');
-                showToast('Erreur de connexion: ' + error.message, 'error');
-            } else {
-                setConnectionStatus('connected');
-                showToast('Connexion Supabase OK', 'success');
-            }
+            await loadStatusFromApi();
+            await loadSyncLogs();
+            showToast('Connexion établie', 'success');
         } catch (e) {
             setConnectionStatus('error');
-            showToast('Erreur: ' + e.message, 'error');
+            showToast('Erreur de connexion: ' + e.message, 'error');
         }
     };
     
-    // Déclencher une synchronisation
+    // Déclencher une sync
     const triggerSync = async (fullSync = false) => {
+        if (!apiUrl) {
+            showToast('Veuillez d\'abord configurer l\'URL de l\'API', 'error');
+            return;
+        }
+        
         setSyncing(true);
-        setSyncProgress({ step: 0, message: fullSync ? 'Synchronisation complète en cours...' : 'Synchronisation incrémentale en cours...', total: 1 });
+        setSyncResult(null);
         
         const startTime = Date.now();
-        const apiUrl = progiliftConfig.apiEndpoint || '/api/sync';
-        const endpoint = fullSync ? `${apiUrl}/full` : apiUrl;
         
         try {
-            setSyncProgress({ step: 0, message: '🔄 Appel de l\'API Progilift...', total: 1 });
-            
-            const response = await fetch(endpoint, { 
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            });
-            
+            const endpoint = fullSync ? '/api/sync/full' : '/api/sync';
+            const response = await fetch(`${apiUrl}${endpoint}`, { method: 'POST' });
             const data = await response.json();
             
-            if (data.status === 'success') {
-                // Succès - créer le log
+            if (data.status === 'success' || data.status === 'partial') {
                 const syncLog = {
                     id: Date.now(),
                     sync_date: new Date().toISOString(),
-                    status: 'success',
+                    status: data.status,
                     equipements_count: data.stats?.equipements || 0,
                     pannes_count: data.stats?.pannes || 0,
                     duration_seconds: data.duration || ((Date.now() - startTime) / 1000)
                 };
                 
-                // Sauvegarder le log en local
+                // Sauvegarder localement
                 const localLogs = JSON.parse(localStorage.getItem('progilift_sync_logs') || '[]');
                 localLogs.unshift(syncLog);
                 localStorage.setItem('progilift_sync_logs', JSON.stringify(localLogs.slice(0, 50)));
-                
-                // Essayer aussi de sauvegarder en BDD
-                try {
-                    await db.from('sync_logs').insert({
-                        sync_date: syncLog.sync_date,
-                        status: syncLog.status,
-                        equipements_count: syncLog.equipements_count,
-                        pannes_count: syncLog.pannes_count,
-                        duration_seconds: syncLog.duration_seconds
-                    });
-                } catch (e) {
-                    console.log('Sauvegarde locale uniquement');
-                }
-                
                 localStorage.setItem('progilift_last_sync', new Date().toISOString());
                 
-                setSyncProgress({ 
-                    step: 1, 
-                    message: `✅ Terminé ! ${syncLog.equipements_count} équipements, ${syncLog.pannes_count} pannes (${syncLog.duration_seconds.toFixed(1)}s)`, 
-                    total: 1, 
-                    success: true 
+                setSyncResult({
+                    success: true,
+                    equipements: data.stats?.equipements || 0,
+                    pannes: data.stats?.pannes || 0,
+                    arret: data.stats?.appareils_arret || 0,
+                    duration: data.duration || ((Date.now() - startTime) / 1000)
                 });
-                showToast(`Synchronisation terminée: ${syncLog.equipements_count} équipements`, 'success');
                 
-                // Rafraîchir les données
+                showToast(`Synchronisation terminée: ${data.stats?.equipements || 0} équipements`, 'success');
+                
+                // Rafraîchir
                 setTimeout(() => {
                     refresh();
                     loadSyncLogs();
-                    setSyncing(false);
-                    setSyncProgress(null);
-                }, 2000);
-                
+                    loadStatusFromApi();
+                }, 1000);
             } else {
                 throw new Error(data.message || 'Erreur de synchronisation');
             }
-            
         } catch (error) {
-            console.error('Sync error:', error);
+            setSyncResult({ success: false, error: error.message });
+            showToast('Erreur: ' + error.message, 'error');
             
-            // Sauvegarder le log d'erreur
-            const syncLog = {
+            // Log erreur
+            const localLogs = JSON.parse(localStorage.getItem('progilift_sync_logs') || '[]');
+            localLogs.unshift({
                 id: Date.now(),
                 sync_date: new Date().toISOString(),
                 status: 'error',
-                equipements_count: 0,
-                pannes_count: 0,
-                duration_seconds: (Date.now() - startTime) / 1000,
-                error_message: error.message
-            };
-            
-            const localLogs = JSON.parse(localStorage.getItem('progilift_sync_logs') || '[]');
-            localLogs.unshift(syncLog);
+                error_message: error.message,
+                duration_seconds: (Date.now() - startTime) / 1000
+            });
             localStorage.setItem('progilift_sync_logs', JSON.stringify(localLogs.slice(0, 50)));
-            
-            setSyncProgress({ step: 0, message: `❌ Erreur: ${error.message}`, total: 1, error: true });
-            showToast('Erreur de synchronisation: ' + error.message, 'error');
-            
-            setTimeout(() => {
-                setSyncing(false);
-                loadSyncLogs();
-            }, 3000);
+        } finally {
+            setSyncing(false);
+            setTimeout(() => setSyncResult(null), 10000);
         }
     };
     
     // Formater la date relative
     const formatRelativeTime = (dateStr) => {
-        if (!dateStr) return 'Jamais';
+        if (!dateStr) return '--';
         const date = new Date(dateStr);
         const now = new Date();
-        const diffMs = now - date;
-        const diffMins = Math.floor(diffMs / 60000);
-        const diffHours = Math.floor(diffMs / 3600000);
-        const diffDays = Math.floor(diffMs / 86400000);
+        const diff = Math.floor((now - date) / 1000 / 60);
         
-        if (diffMins < 1) return 'À l\'instant';
-        if (diffMins < 60) return `Il y a ${diffMins} min`;
-        if (diffHours < 24) return `Il y a ${diffHours}h`;
-        if (diffDays < 7) return `Il y a ${diffDays}j`;
+        if (diff < 1) return 'À l\'instant';
+        if (diff < 60) return `Il y a ${diff} min`;
+        if (diff < 1440) return `Il y a ${Math.floor(diff / 60)}h`;
         return date.toLocaleDateString('fr-FR');
     };
     
-    return h('div', null,
-        // Header
+    const glassStyle = { background: 'rgba(30, 41, 59, 0.5)', backdropFilter: 'blur(10px)', border: `1px solid rgba(51, 65, 85, 0.5)`, borderRadius: 16 };
+    const statCardStyle = { ...glassStyle, padding: 20, transition: 'all 0.2s' };
+    
+    return h('div', { style: { background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)', margin: -24, padding: 24, minHeight: '100%', borderRadius: 12 } },
+        
+        // Header avec badge connexion
         h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 } },
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: 16 } },
-                h('div', { style: { 
-                    width: 48, height: 48, borderRadius: 12, 
-                    background: 'linear-gradient(135deg, #3B82F6 0%, #1D4ED8 100%)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center'
-                } },
-                    h('span', { style: { fontSize: 24 } }, '🔄')
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 12 } },
+                h('div', { style: { width: 40, height: 40, borderRadius: 12, background: 'linear-gradient(135deg, #3B82F6 0%, #8B5CF6 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+                    h('span', { style: { fontSize: 18 } }, '🛗')
                 ),
                 h('div', null,
-                    h('h3', { style: { fontSize: 18, fontWeight: 600, marginBottom: 4 } }, 'Progilift Sync'),
-                    h('p', { style: { fontSize: 13, color: COLORS.muted } }, 'Synchronisation des données Progilift')
+                    h('div', { style: { fontSize: 18, fontWeight: 700, color: 'white' } }, 'Progilift Sync'),
+                    h('div', { style: { fontSize: 12, color: '#94A3B8' } }, 'Synchronisation automatique')
                 )
             ),
-            // Status badge
             h('div', { style: { 
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '8px 16px', borderRadius: 20,
-                background: connectionStatus === 'connected' ? '#D1FAE5' : connectionStatus === 'error' ? '#FEE2E2' : '#F3F4F6',
-                color: connectionStatus === 'connected' ? '#059669' : connectionStatus === 'error' ? '#DC2626' : '#6B7280'
+                display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', borderRadius: 20,
+                background: 'rgba(51, 65, 85, 0.5)', fontSize: 13
             } },
                 h('span', { style: { 
                     width: 8, height: 8, borderRadius: '50%',
-                    background: connectionStatus === 'connected' ? '#10B981' : connectionStatus === 'error' ? '#EF4444' : '#9CA3AF',
-                    animation: connectionStatus === 'checking' ? 'pulse 1.5s infinite' : 'none'
+                    background: connectionStatus === 'connected' ? '#10B981' : connectionStatus === 'error' ? '#EF4444' : '#EAB308',
+                    animation: connectionStatus === 'checking' ? 'pulse 2s infinite' : 'none'
                 } }),
-                h('span', { style: { fontSize: 13, fontWeight: 500 } }, 
-                    connectionStatus === 'connected' ? 'Connecté' : connectionStatus === 'error' ? 'Erreur' : 'Vérification...'
+                h('span', { style: { color: connectionStatus === 'connected' ? '#10B981' : connectionStatus === 'error' ? '#EF4444' : '#EAB308' } },
+                    connectionStatus === 'connected' ? 'Connecté' : connectionStatus === 'error' ? 'Erreur' : 'Connexion...'
                 )
             )
         ),
         
-        // Stats Cards
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 } },
-            // Équipements
-            h('div', { style: { padding: 16, background: COLORS.background, borderRadius: 12, border: `1px solid ${COLORS.border}` } },
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 } },
-                    h('span', { style: { fontSize: 18 } }, '🏢'),
-                    h('span', { style: { fontSize: 12, color: COLORS.muted } }, 'Équipements')
-                ),
-                h('div', { style: { fontSize: 28, fontWeight: 700, color: '#3B82F6' } }, stats.equipements.toLocaleString())
+        // Configuration
+        h('div', { style: { ...glassStyle, padding: 20, marginBottom: 20 } },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, color: '#94A3B8' } },
+                h('span', null, '⚙️'),
+                h('span', { style: { fontWeight: 600, color: 'white' } }, 'Configuration')
             ),
-            // Pannes
-            h('div', { style: { padding: 16, background: COLORS.background, borderRadius: 12, border: `1px solid ${COLORS.border}` } },
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 } },
-                    h('span', { style: { fontSize: 18 } }, '🔧'),
-                    h('span', { style: { fontSize: 12, color: COLORS.muted } }, 'Pannes')
-                ),
-                h('div', { style: { fontSize: 28, fontWeight: 700, color: '#F59E0B' } }, stats.pannes.toLocaleString())
-            ),
-            // À l'arrêt
-            h('div', { style: { padding: 16, background: COLORS.background, borderRadius: 12, border: `1px solid ${COLORS.border}` } },
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 } },
-                    h('span', { style: { fontSize: 18 } }, '⚠️'),
-                    h('span', { style: { fontSize: 12, color: COLORS.muted } }, 'À l\'arrêt')
-                ),
-                h('div', { style: { fontSize: 28, fontWeight: 700, color: '#EF4444' } }, stats.arret)
-            ),
-            // Dernière sync
-            h('div', { style: { padding: 16, background: COLORS.background, borderRadius: 12, border: `1px solid ${COLORS.border}` } },
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 } },
-                    h('span', { style: { fontSize: 18 } }, '🕐'),
-                    h('span', { style: { fontSize: 12, color: COLORS.muted } }, 'Dernière sync')
-                ),
-                h('div', { style: { fontSize: 16, fontWeight: 600, color: '#10B981' } }, formatRelativeTime(stats.lastSync))
+            h('div', { style: { display: 'flex', gap: 12 } },
+                h('input', {
+                    type: 'text',
+                    value: apiUrl,
+                    onChange: e => setApiUrl(e.target.value),
+                    placeholder: 'URL de l\'API Vercel (ex: https://mon-projet.vercel.app)',
+                    style: { 
+                        flex: 1, padding: '12px 16px', background: '#1E293B', border: '1px solid #334155',
+                        borderRadius: 12, color: 'white', fontSize: 14, outline: 'none'
+                    }
+                }),
+                h('button', {
+                    onClick: saveAndConnect,
+                    style: { 
+                        padding: '12px 20px', background: '#3B82F6', color: 'white', border: 'none',
+                        borderRadius: 12, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8
+                    }
+                }, '🔌 Connecter')
             )
         ),
         
-        // Actions
-        h('div', { style: { padding: 20, background: COLORS.background, borderRadius: 12, border: `1px solid ${COLORS.border}`, marginBottom: 24 } },
-            h('h4', { style: { fontSize: 15, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 } },
-                h('span', null, '▶️'),
-                'Actions'
+        // Stats Grid
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 20 } },
+            // Équipements
+            h('div', { style: statCardStyle },
+                h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 } },
+                    h('div', { style: { width: 40, height: 40, borderRadius: 12, background: 'rgba(59, 130, 246, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+                        h('span', { style: { color: '#60A5FA' } }, '🏢')
+                    ),
+                    h('span', { style: { fontSize: 10, color: '#64748B', textTransform: 'uppercase', letterSpacing: 1 } }, 'Total')
+                ),
+                h('div', { style: { fontSize: 28, fontWeight: 700, color: 'white', marginBottom: 4 } }, stats.equipements.toLocaleString()),
+                h('div', { style: { fontSize: 13, color: '#94A3B8' } }, 'Équipements')
+            ),
+            // Pannes
+            h('div', { style: statCardStyle },
+                h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 } },
+                    h('div', { style: { width: 40, height: 40, borderRadius: 12, background: 'rgba(249, 115, 22, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+                        h('span', { style: { color: '#FB923C' } }, '🔧')
+                    ),
+                    h('span', { style: { fontSize: 10, color: '#64748B', textTransform: 'uppercase', letterSpacing: 1 } }, 'Total')
+                ),
+                h('div', { style: { fontSize: 28, fontWeight: 700, color: 'white', marginBottom: 4 } }, stats.pannes.toLocaleString()),
+                h('div', { style: { fontSize: 13, color: '#94A3B8' } }, 'Pannes')
+            ),
+            // À l'arrêt
+            h('div', { style: statCardStyle },
+                h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 } },
+                    h('div', { style: { width: 40, height: 40, borderRadius: 12, background: 'rgba(239, 68, 68, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+                        h('span', { style: { color: '#F87171' } }, '⚠️')
+                    ),
+                    h('span', { style: { fontSize: 10, color: '#64748B', textTransform: 'uppercase', letterSpacing: 1 } }, 'En cours')
+                ),
+                h('div', { style: { fontSize: 28, fontWeight: 700, color: '#F87171', marginBottom: 4 } }, stats.arret),
+                h('div', { style: { fontSize: 13, color: '#94A3B8' } }, 'À l\'arrêt')
+            ),
+            // Dernière sync
+            h('div', { style: statCardStyle },
+                h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 } },
+                    h('div', { style: { width: 40, height: 40, borderRadius: 12, background: 'rgba(16, 185, 129, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+                        h('span', { style: { color: '#34D399' } }, '🕐')
+                    ),
+                    stats.lastSyncStatus && h('span', { style: { 
+                        fontSize: 10, padding: '2px 8px', borderRadius: 10,
+                        background: stats.lastSyncStatus === 'success' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+                        color: stats.lastSyncStatus === 'success' ? '#34D399' : '#F87171'
+                    } }, stats.lastSyncStatus === 'success' ? 'OK' : 'Erreur')
+                ),
+                h('div', { style: { fontSize: 20, fontWeight: 700, color: 'white', marginBottom: 4 } }, formatRelativeTime(stats.lastSync)),
+                h('div', { style: { fontSize: 13, color: '#94A3B8' } }, 'Dernière sync')
+            )
+        ),
+        
+        // Synchronisation
+        h('div', { style: { ...glassStyle, padding: 20, marginBottom: 20 } },
+            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 } },
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                    h('span', { style: { color: '#60A5FA' } }, '🔄'),
+                    h('span', { style: { fontWeight: 600, color: 'white' } }, 'Synchronisation')
+                ),
+                h('div', { style: { fontSize: 12, color: '#64748B', display: 'flex', alignItems: 'center', gap: 6 } },
+                    h('span', { style: { width: 6, height: 6, borderRadius: '50%', background: '#10B981' } }),
+                    'Auto-refresh actif'
+                )
             ),
             
-            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 } },
-                // Sync incrémentale
+            // Boutons
+            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 } },
                 h('button', {
-                    className: 'btn',
                     onClick: () => triggerSync(false),
                     disabled: syncing,
                     style: { 
                         padding: '16px 24px', 
                         background: 'linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: 12,
-                        fontSize: 14,
-                        fontWeight: 600,
-                        cursor: syncing ? 'not-allowed' : 'pointer',
-                        opacity: syncing ? 0.6 : 1,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 10
+                        color: 'white', border: 'none', borderRadius: 12, cursor: syncing ? 'not-allowed' : 'pointer',
+                        opacity: syncing ? 0.5 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12,
+                        transition: 'all 0.2s'
                     }
                 },
-                    h('span', null, '🔄'),
-                    'Sync Incrémentale'
+                    h('span', { style: { fontSize: 18 } }, '🔄'),
+                    h('div', { style: { textAlign: 'left' } },
+                        h('div', { style: { fontWeight: 600 } }, 'Sync Incrémentale'),
+                        h('div', { style: { fontSize: 11, opacity: 0.8 } }, 'Uniquement les modifications')
+                    )
                 ),
-                // Sync complète
                 h('button', {
-                    className: 'btn',
                     onClick: () => triggerSync(true),
                     disabled: syncing,
                     style: { 
                         padding: '16px 24px', 
                         background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: 12,
-                        fontSize: 14,
-                        fontWeight: 600,
-                        cursor: syncing ? 'not-allowed' : 'pointer',
-                        opacity: syncing ? 0.6 : 1,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 10
+                        color: 'white', border: 'none', borderRadius: 12, cursor: syncing ? 'not-allowed' : 'pointer',
+                        opacity: syncing ? 0.5 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12,
+                        transition: 'all 0.2s'
                     }
                 },
-                    h('span', null, '📦'),
-                    'Sync Complète'
-                )
-            ),
-            
-            // Progress bar
-            syncProgress && h('div', { style: { 
-                padding: 16, 
-                background: syncProgress.error ? '#FEE2E2' : syncProgress.success ? '#D1FAE5' : '#DBEAFE',
-                borderRadius: 12,
-                border: `1px solid ${syncProgress.error ? '#FECACA' : syncProgress.success ? '#A7F3D0' : '#BFDBFE'}`
-            } },
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: syncProgress.success || syncProgress.error ? 0 : 12 } },
-                    !syncProgress.success && !syncProgress.error && h('div', { style: { 
-                        width: 20, height: 20, 
-                        border: '3px solid #BFDBFE', 
-                        borderTopColor: '#3B82F6', 
-                        borderRadius: '50%', 
-                        animation: 'spin 1s linear infinite' 
-                    } }),
-                    h('span', { style: { 
-                        color: syncProgress.error ? '#DC2626' : syncProgress.success ? '#059669' : '#1D4ED8',
-                        fontWeight: 500 
-                    } }, syncProgress.message)
-                ),
-                !syncProgress.success && !syncProgress.error && h('div', { style: { height: 6, background: '#E5E7EB', borderRadius: 3, overflow: 'hidden' } },
-                    h('div', { style: { 
-                        width: `${(syncProgress.step / syncProgress.total) * 100}%`, 
-                        height: '100%', 
-                        background: 'linear-gradient(90deg, #3B82F6 0%, #2563EB 100%)',
-                        borderRadius: 3,
-                        transition: 'width 0.3s ease'
-                    } })
-                )
-            ),
-            
-            // Boutons secondaires
-            h('div', { style: { display: 'flex', gap: 12, marginTop: 16 } },
-                h('button', {
-                    className: 'btn btn-ghost btn-sm',
-                    onClick: testConnection
-                }, '🔌 Tester connexion'),
-                h('button', {
-                    className: 'btn btn-ghost btn-sm',
-                    onClick: () => setShowConfig(!showConfig)
-                }, '⚙️ Configuration'),
-                h('button', {
-                    className: 'btn btn-ghost btn-sm',
-                    onClick: loadSyncLogs
-                }, '🔃 Rafraîchir')
-            )
-        ),
-        
-        // Configuration (collapsible)
-        showConfig && h('div', { style: { padding: 20, background: COLORS.background, borderRadius: 12, border: `1px solid ${COLORS.border}`, marginBottom: 24 } },
-            h('h4', { style: { fontSize: 15, fontWeight: 600, marginBottom: 16 } }, '⚙️ Configuration Progilift'),
-            
-            h('div', { style: { display: 'grid', gap: 16 } },
-                h('div', { className: 'form-group' },
-                    h('label', { className: 'form-label' }, 'URL SOAP Progilift'),
-                    h('input', {
-                        type: 'text',
-                        className: 'form-input',
-                        value: progiliftConfig.soapUrl,
-                        onChange: e => setProgiliftConfig({ ...progiliftConfig, soapUrl: e.target.value }),
-                        placeholder: 'https://votre-serveur.progilift.fr/soap'
-                    })
-                ),
-                h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 } },
-                    h('div', { className: 'form-group' },
-                        h('label', { className: 'form-label' }, 'Utilisateur SOAP'),
-                        h('input', {
-                            type: 'text',
-                            className: 'form-input',
-                            value: progiliftConfig.soapUsername,
-                            onChange: e => setProgiliftConfig({ ...progiliftConfig, soapUsername: e.target.value }),
-                            placeholder: 'username'
-                        })
-                    ),
-                    h('div', { className: 'form-group' },
-                        h('label', { className: 'form-label' }, 'Mot de passe SOAP'),
-                        h('input', {
-                            type: 'password',
-                            className: 'form-input',
-                            value: progiliftConfig.soapPassword,
-                            onChange: e => setProgiliftConfig({ ...progiliftConfig, soapPassword: e.target.value }),
-                            placeholder: '••••••••'
-                        })
+                    h('span', { style: { fontSize: 18 } }, '📦'),
+                    h('div', { style: { textAlign: 'left' } },
+                        h('div', { style: { fontWeight: 600 } }, 'Sync Complète'),
+                        h('div', { style: { fontSize: 11, opacity: 0.8 } }, 'Toutes les données (~3-5 min)')
                     )
-                ),
-                h('div', { className: 'form-group' },
-                    h('label', { className: 'form-label' }, 'Endpoint API (Vercel/Proxy)'),
-                    h('input', {
-                        type: 'text',
-                        className: 'form-input',
-                        value: progiliftConfig.apiEndpoint,
-                        onChange: e => setProgiliftConfig({ ...progiliftConfig, apiEndpoint: e.target.value }),
-                        placeholder: '/api/sync ou https://progilift-sync.vercel.app/api/sync'
-                    })
-                ),
-                h('div', { style: { display: 'flex', gap: 12 } },
-                    h('button', { className: 'btn btn-primary', onClick: saveConfig }, '💾 Sauvegarder'),
-                    h('button', { className: 'btn btn-ghost', onClick: () => setShowConfig(false) }, 'Annuler')
+                )
+            ),
+            
+            // Progress
+            syncing && h('div', { style: { padding: 16, background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 12 } },
+                h('div', { style: { width: 20, height: 20, border: '2px solid #60A5FA', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' } }),
+                h('div', null,
+                    h('div', { style: { color: '#93C5FD', fontWeight: 500 } }, 'Synchronisation en cours...'),
+                    h('div', { style: { fontSize: 12, color: '#60A5FA', marginTop: 4 } }, 'Veuillez patienter, cela peut prendre plusieurs minutes')
+                )
+            ),
+            
+            // Result
+            syncResult && h('div', { style: { 
+                padding: 16, borderRadius: 12,
+                background: syncResult.success ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                border: `1px solid ${syncResult.success ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`
+            } },
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 12 } },
+                    h('div', { style: { 
+                        width: 40, height: 40, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: syncResult.success ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'
+                    } },
+                        h('span', null, syncResult.success ? '✓' : '✗')
+                    ),
+                    h('div', null,
+                        h('div', { style: { fontWeight: 500, color: syncResult.success ? '#34D399' : '#F87171' } }, 
+                            syncResult.success ? 'Synchronisation terminée !' : 'Erreur de synchronisation'
+                        ),
+                        syncResult.success ? 
+                            h('div', { style: { fontSize: 13, color: syncResult.success ? '#6EE7B7' : '#FCA5A5', marginTop: 4 } },
+                                `${syncResult.equipements} équipements • ${syncResult.pannes} pannes • ${syncResult.arret} à l'arrêt • ${syncResult.duration?.toFixed(1)}s`
+                            ) :
+                            h('div', { style: { fontSize: 13, color: '#FCA5A5', marginTop: 4 } }, syncResult.error)
+                    )
                 )
             )
         ),
         
-        // Historique des logs
-        h('div', { style: { padding: 20, background: COLORS.background, borderRadius: 12, border: `1px solid ${COLORS.border}` } },
-            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 } },
-                h('h4', { style: { fontSize: 15, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 } },
-                    h('span', null, '📜'),
-                    'Historique des synchronisations'
+        // Historique
+        h('div', { style: { ...glassStyle, padding: 20 } },
+            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 } },
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                    h('span', { style: { color: '#A78BFA' } }, '📜'),
+                    h('span', { style: { fontWeight: 600, color: 'white' } }, 'Historique des synchronisations')
                 ),
                 h('button', { 
-                    className: 'btn btn-ghost btn-sm',
-                    onClick: loadSyncLogs 
-                }, h(Icon, { name: 'refresh', size: 14 }))
+                    onClick: loadSyncLogs,
+                    style: { padding: 8, background: 'transparent', border: 'none', cursor: 'pointer', color: '#94A3B8', borderRadius: 8 }
+                }, '🔄')
             ),
             
-            syncLogs.length === 0 ? 
-                h('div', { style: { textAlign: 'center', padding: 32, color: COLORS.muted } },
-                    h('div', { style: { fontSize: 32, marginBottom: 8 } }, '📭'),
-                    h('p', null, 'Aucun historique de synchronisation')
-                ) :
-                h('div', { style: { maxHeight: 320, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 } },
-                    syncLogs.map((log, idx) => {
-                        const isSuccess = log.status === 'success';
+            h('div', { style: { maxHeight: 380, overflowY: 'auto' } },
+                syncLogs.length === 0 ?
+                    h('div', { style: { textAlign: 'center', padding: 48, color: '#64748B' } },
+                        h('div', { style: { fontSize: 40, marginBottom: 12 } }, '📭'),
+                        h('div', null, 'Aucun historique disponible')
+                    ) :
+                    syncLogs.map((log, index) => {
                         const date = new Date(log.sync_date);
+                        const isSuccess = log.status === 'success';
+                        const isPartial = log.status === 'partial';
                         
                         return h('div', { 
-                            key: log.id || idx,
+                            key: log.id || index,
                             style: { 
-                                display: 'flex', 
-                                alignItems: 'center', 
-                                justifyContent: 'space-between',
-                                padding: 12,
-                                background: COLORS.card,
-                                borderRadius: 8,
-                                border: `1px solid ${COLORS.border}`
+                                display: 'flex', alignItems: 'center', gap: 16, padding: 12, borderRadius: 12,
+                                background: index === 0 ? 'rgba(51, 65, 85, 0.3)' : 'transparent',
+                                marginBottom: 8, transition: 'background 0.2s'
                             }
                         },
-                            h('div', { style: { display: 'flex', alignItems: 'center', gap: 12 } },
-                                h('div', { style: { 
-                                    width: 36, height: 36, 
-                                    borderRadius: 8,
-                                    background: isSuccess ? '#D1FAE5' : '#FEE2E2',
-                                    color: isSuccess ? '#059669' : '#DC2626',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    fontSize: 16
-                                } }, isSuccess ? '✓' : '✗'),
-                                h('div', null,
-                                    h('div', { style: { fontWeight: 500, fontSize: 14 } }, 
-                                        `${date.toLocaleDateString('fr-FR')} ${date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
-                                    ),
-                                    h('div', { style: { fontSize: 12, color: COLORS.muted } },
-                                        `${log.equipements_count || 0} équip. • ${log.pannes_count || 0} pannes • ${(log.duration_seconds || 0).toFixed(1)}s`
-                                    )
+                            h('div', { style: { 
+                                width: 40, height: 40, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                background: isSuccess ? 'rgba(16, 185, 129, 0.2)' : isPartial ? 'rgba(234, 179, 8, 0.2)' : 'rgba(239, 68, 68, 0.2)'
+                            } },
+                                h('span', { style: { color: isSuccess ? '#34D399' : isPartial ? '#FBBF24' : '#F87171' } }, 
+                                    isSuccess ? '✓' : isPartial ? '!' : '✗'
                                 )
                             ),
-                            log.error_message && h('span', { style: { 
-                                fontSize: 11, 
-                                color: '#DC2626', 
-                                maxWidth: 150, 
-                                overflow: 'hidden', 
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap'
-                            } }, log.error_message)
+                            h('div', { style: { flex: 1, minWidth: 0 } },
+                                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                                    h('span', { style: { fontWeight: 500, color: 'white' } }, date.toLocaleDateString('fr-FR')),
+                                    h('span', { style: { color: '#64748B' } }, date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })),
+                                    index === 0 && h('span', { style: { fontSize: 10, padding: '2px 8px', borderRadius: 10, background: 'rgba(59, 130, 246, 0.2)', color: '#60A5FA' } }, 'Dernière')
+                                ),
+                                h('div', { style: { fontSize: 13, color: '#94A3B8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+                                    `${log.equipements_count || 0} équip. • ${log.pannes_count || 0} pannes • ${log.duration_seconds?.toFixed(1) || '?'}s`,
+                                    log.error_message && h('span', { style: { color: '#F87171', marginLeft: 8 } }, `• ${log.error_message.substring(0, 50)}...`)
+                                )
+                            )
                         );
                     })
-                )
+            )
         ),
         
-        // Info footer
-        h('div', { style: { marginTop: 20, padding: 16, background: '#DBEAFE', borderRadius: 12, display: 'flex', alignItems: 'flex-start', gap: 12 } },
-            h('span', { style: { fontSize: 20 } }, 'ℹ️'),
-            h('div', { style: { fontSize: 13, color: '#1E40AF' } },
-                h('strong', null, 'Note: '),
-                'Cette interface permet de synchroniser les données Progilift avec votre base Supabase. ',
-                'Pour une synchronisation automatique, configurez un cron job Vercel qui appellera l\'API /api/sync toutes les heures.'
+        // Footer info
+        h('div', { style: { marginTop: 20, padding: 16, background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.2)', borderRadius: 12, display: 'flex', alignItems: 'flex-start', gap: 12 } },
+            h('span', { style: { fontSize: 18 } }, 'ℹ️'),
+            h('div', { style: { fontSize: 13, color: '#93C5FD' } },
+                h('strong', null, 'Configuration: '),
+                'Entrez l\'URL de votre API Vercel (ex: https://progilift-sync.vercel.app) et cliquez sur Connecter. ',
+                'La synchronisation automatique s\'effectue toutes les heures via le cron job Vercel.'
             )
         )
     );
