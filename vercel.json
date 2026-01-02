@@ -1,5 +1,11 @@
 {
   "version": 2,
+  "functions": {
+    "api/sync.py": {
+      "maxDuration": 300,
+      "memory": 1024
+    }
+    },
   "rewrites": [
     { "source": "/api/sync/full", "destination": "/api/sync" },
     { "source": "/", "destination": "/public/index.html" }
