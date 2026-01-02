@@ -1,30 +1,44 @@
 """
-Progilift Sync - Vercel Serverless Function (Version corrigée)
+Progilift Sync - Vercel Serverless Function
+Version sans dépendances externes (urllib uniquement)
 """
 
 import os
 import json
 import re
+import ssl
+import urllib.request
+import urllib.parse
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler
 from typing import Optional, Dict, Any, List
-
-# Utiliser requests au lieu du client supabase
-import requests as http_requests
 
 # Configuration
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
 PROGILIFT_CODE = os.environ.get('PROGILIFT_CODE', 'AUVNB1')
 
+# SSL context
+ssl_context = ssl.create_default_context()
+
+
+def http_request(url: str, method: str = 'GET', data: bytes = None, headers: dict = None, timeout: int = 60) -> tuple:
+    """Requête HTTP simple avec urllib"""
+    try:
+        req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
+        with urllib.request.urlopen(req, timeout=timeout, context=ssl_context) as resp:
+            return resp.status, resp.read().decode('utf-8'), dict(resp.headers)
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode('utf-8') if e.fp else '', {}
+    except Exception as e:
+        return 0, str(e), {}
+
 
 # ============================================================================
-# CLIENT SUPABASE SIMPLIFIÉ (sans dépendance supabase-py)
+# CLIENT SUPABASE
 # ============================================================================
 
 class SupabaseClient:
-    """Client Supabase minimaliste via REST API"""
-    
     def __init__(self, url: str, key: str):
         self.url = url.rstrip('/')
         self.headers = {
@@ -35,55 +49,34 @@ class SupabaseClient:
         }
     
     def insert(self, table: str, data: dict) -> bool:
-        try:
-            resp = http_requests.post(
-                f"{self.url}/rest/v1/{table}",
-                headers=self.headers,
-                json=data,
-                timeout=10
-            )
-            return resp.status_code in [200, 201, 204]
-        except Exception as e:
-            print(f"Supabase insert error: {e}")
-            return False
+        status, body, _ = http_request(
+            f"{self.url}/rest/v1/{table}",
+            method='POST',
+            data=json.dumps(data).encode('utf-8'),
+            headers=self.headers,
+            timeout=10
+        )
+        return status in [200, 201, 204]
     
     def upsert(self, table: str, data: list, on_conflict: str) -> bool:
-        try:
-            headers = {**self.headers, 'Prefer': 'resolution=merge-duplicates'}
-            resp = http_requests.post(
-                f"{self.url}/rest/v1/{table}",
-                headers=headers,
-                json=data,
-                timeout=30
-            )
-            return resp.status_code in [200, 201, 204]
-        except Exception as e:
-            print(f"Supabase upsert error: {e}")
-            return False
+        headers = {**self.headers, 'Prefer': 'resolution=merge-duplicates'}
+        status, body, _ = http_request(
+            f"{self.url}/rest/v1/{table}",
+            method='POST',
+            data=json.dumps(data).encode('utf-8'),
+            headers=headers,
+            timeout=30
+        )
+        return status in [200, 201, 204]
     
     def delete(self, table: str) -> bool:
-        try:
-            resp = http_requests.delete(
-                f"{self.url}/rest/v1/{table}?id=gte.0",
-                headers=self.headers,
-                timeout=10
-            )
-            return resp.status_code in [200, 204]
-        except:
-            return False
-    
-    def select(self, table: str, columns: str = '*', limit: int = 1) -> list:
-        try:
-            resp = http_requests.get(
-                f"{self.url}/rest/v1/{table}?select={columns}&limit={limit}&order=sync_date.desc",
-                headers=self.headers,
-                timeout=10
-            )
-            if resp.status_code == 200:
-                return resp.json()
-            return []
-        except:
-            return []
+        status, _, _ = http_request(
+            f"{self.url}/rest/v1/{table}?id=gte.0",
+            method='DELETE',
+            headers=self.headers,
+            timeout=10
+        )
+        return status in [200, 204]
 
 
 # ============================================================================
@@ -128,15 +121,14 @@ class ProgiliftClient:
         soap = self.SOAP_TEMPLATE.format(method=method, params=params_xml, wsid_header=wsid_header)
         headers = {
             'Content-Type': 'text/xml; charset=utf-8',
-            'SOAPAction': f'"{self.NS}/{method}"'
+            'SOAPAction': f'"{self.NS}/{method}"',
+            'User-Agent': 'ProgiliftSync/1.0'
         }
         
-        try:
-            resp = http_requests.post(self.WS_URL, data=soap.encode('utf-8'), headers=headers, timeout=timeout)
-            if resp.status_code == 200 and "Fault" not in resp.text:
-                return resp.text
-        except Exception as e:
-            print(f"Progilift API error: {e}")
+        status, body, _ = http_request(self.WS_URL, method='POST', data=soap.encode('utf-8'), headers=headers, timeout=timeout)
+        
+        if status == 200 and "Fault" not in body:
+            return body
         return None
     
     def _convert(self, value: str) -> Any:
@@ -213,7 +205,7 @@ class ProgiliftClient:
 
 
 # ============================================================================
-# FONCTION DE SYNC
+# SYNC
 # ============================================================================
 
 def run_sync(full_sync: bool = False) -> Dict:
@@ -221,15 +213,12 @@ def run_sync(full_sync: bool = False) -> Dict:
     stats = {"equipements": 0, "pannes": 0, "appareils_arret": 0}
     
     try:
-        # Vérifier config
         if not SUPABASE_URL or not SUPABASE_KEY:
             raise Exception("SUPABASE_URL et SUPABASE_KEY requis")
         
-        # Init clients
         progilift = ProgiliftClient(PROGILIFT_CODE)
         supabase = SupabaseClient(SUPABASE_URL, SUPABASE_KEY)
         
-        # Auth Progilift
         if not progilift.authenticate():
             raise Exception("Échec authentification Progilift")
         
@@ -245,10 +234,9 @@ def run_sync(full_sync: bool = False) -> Dict:
                 record = {
                     'id_wsoucont': id_ws,
                     'id_wcontrat': item.get('IDWCONTRAT'),
-                    'ascenseur': (item.get('ASCENSEUR') or '').strip(),
+                    'ascenseur': (item.get('ASCENSEUR') or '').strip()[:50],
                     'updated_at': datetime.now().isoformat()
                 }
-                # Ajouter les 10 derniers passages
                 for i in range(1, 11):
                     record[f'lib{i}'] = (item.get(f'LIB{i}') or '')[:100]
                     record[f'datepass{i}'] = item.get(f'DATEPASS{i}')
@@ -267,7 +255,7 @@ def run_sync(full_sync: bool = False) -> Dict:
                 'id_panne': item.get('P0CLEUNIK'),
                 'id_wsoucont': item.get('IDWSOUCONT'),
                 'date_panne': str(item.get('DATE', '')),
-                'depanneur': (item.get('DEPANNEUR') or '').strip(),
+                'depanneur': (item.get('DEPANNEUR') or '').strip()[:100],
                 'libelle': (item.get('PANNES') or '')[:200],
                 'updated_at': datetime.now().isoformat()
             })
@@ -281,20 +269,15 @@ def run_sync(full_sync: bool = False) -> Dict:
         arrets = progilift.get_appareils_arret()
         supabase.delete('appareils_arret')
         
-        arret_records = []
         for item in arrets:
-            arret_records.append({
+            supabase.insert('appareils_arret', {
                 'id_wsoucont': item.get('nIDSOUCONT'),
                 'date_appel': (item.get('sDateAppel') or '').strip(),
                 'heure_appel': (item.get('sHeureAppel') or '').strip(),
                 'motif': (item.get('sMotifAppel') or '').strip(),
                 'updated_at': datetime.now().isoformat()
             })
-        
-        if arret_records:
-            for record in arret_records:
-                supabase.insert('appareils_arret', record)
-        stats["appareils_arret"] = len(arret_records)
+        stats["appareils_arret"] = len(arrets)
         
         # Log
         duration = (datetime.now() - start_time).total_seconds()
@@ -309,21 +292,19 @@ def run_sync(full_sync: bool = False) -> Dict:
         return {"status": "success", "stats": stats, "duration": round(duration, 1)}
         
     except Exception as e:
-        error_msg = str(e)
         try:
-            supabase = SupabaseClient(SUPABASE_URL, SUPABASE_KEY)
-            supabase.insert('sync_logs', {
+            SupabaseClient(SUPABASE_URL, SUPABASE_KEY).insert('sync_logs', {
                 'sync_date': datetime.now().isoformat(),
                 'status': 'error',
-                'error_message': error_msg[:500]
+                'error_message': str(e)[:500]
             })
         except:
             pass
-        return {"status": "error", "message": error_msg}
+        return {"status": "error", "message": str(e)}
 
 
 # ============================================================================
-# HANDLER VERCEL
+# HANDLER
 # ============================================================================
 
 class handler(BaseHTTPRequestHandler):
@@ -332,7 +313,6 @@ class handler(BaseHTTPRequestHandler):
         self.send_header('Content-type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
-        
         result = run_sync(full_sync=False)
         self.wfile.write(json.dumps(result).encode())
     
@@ -341,9 +321,7 @@ class handler(BaseHTTPRequestHandler):
         self.send_header('Content-type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
-        
-        full_sync = 'full' in self.path
-        result = run_sync(full_sync=full_sync)
+        result = run_sync(full_sync='full' in self.path)
         self.wfile.write(json.dumps(result).encode())
     
     def do_OPTIONS(self):

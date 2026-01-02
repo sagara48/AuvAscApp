@@ -1,16 +1,28 @@
 """
-Progilift Sync - Status API (Version simplifiée)
+Progilift Sync - Status API (sans dépendances)
 """
 
 import os
 import json
+import ssl
+import urllib.request
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler
-import requests
 
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
 PROGILIFT_CODE = os.environ.get('PROGILIFT_CODE', 'AUVNB1')
+
+ssl_context = ssl.create_default_context()
+
+
+def http_get(url: str, headers: dict) -> tuple:
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10, context=ssl_context) as resp:
+            return resp.status, resp.read().decode('utf-8'), dict(resp.headers)
+    except Exception as e:
+        return 0, str(e), {}
 
 
 def get_status():
@@ -21,42 +33,17 @@ def get_status():
         }
         
         # Dernière sync
-        resp = requests.get(
+        status, body, _ = http_get(
             f"{SUPABASE_URL}/rest/v1/sync_logs?select=*&order=sync_date.desc&limit=1",
-            headers=headers, timeout=10
+            headers
         )
-        last_sync = resp.json()[0] if resp.status_code == 200 and resp.json() else None
-        
-        # Counts
-        equipements = requests.get(
-            f"{SUPABASE_URL}/rest/v1/equipements?select=id_wsoucont",
-            headers={**headers, 'Prefer': 'count=exact'}, timeout=10
-        )
-        
-        pannes = requests.get(
-            f"{SUPABASE_URL}/rest/v1/pannes?select=id_panne",
-            headers={**headers, 'Prefer': 'count=exact'}, timeout=10
-        )
-        
-        arrets = requests.get(
-            f"{SUPABASE_URL}/rest/v1/appareils_arret?select=id",
-            headers={**headers, 'Prefer': 'count=exact'}, timeout=10
-        )
+        last_sync = json.loads(body)[0] if status == 200 and body.startswith('[') else None
         
         return {
             "status": "ok",
             "progilift_code": PROGILIFT_CODE,
-            "last_sync": {
-                "date": last_sync['sync_date'] if last_sync else None,
-                "status": last_sync['status'] if last_sync else None,
-                "equipements": last_sync['equipements_count'] if last_sync else 0,
-                "pannes": last_sync['pannes_count'] if last_sync else 0,
-            } if last_sync else None,
-            "totals": {
-                "equipements": int(equipements.headers.get('content-range', '0-0/0').split('/')[-1]) if equipements.status_code == 200 else 0,
-                "pannes": int(pannes.headers.get('content-range', '0-0/0').split('/')[-1]) if pannes.status_code == 200 else 0,
-                "appareils_arret": int(arrets.headers.get('content-range', '0-0/0').split('/')[-1]) if arrets.status_code == 200 else 0,
-            },
+            "supabase_url": SUPABASE_URL[:30] + "..." if SUPABASE_URL else "NOT SET",
+            "last_sync": last_sync,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -69,9 +56,7 @@ class handler(BaseHTTPRequestHandler):
         self.send_header('Content-type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
-        
-        result = get_status()
-        self.wfile.write(json.dumps(result).encode())
+        self.wfile.write(json.dumps(get_status()).encode())
     
     def do_OPTIONS(self):
         self.send_response(200)

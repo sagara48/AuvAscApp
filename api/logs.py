@@ -1,14 +1,17 @@
 """
-Progilift Sync - Logs API
+Progilift Sync - Logs API (sans dépendances)
 """
 
 import os
 import json
+import ssl
+import urllib.request
 from http.server import BaseHTTPRequestHandler
-import requests
 
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
+
+ssl_context = ssl.create_default_context()
 
 
 class handler(BaseHTTPRequestHandler):
@@ -23,12 +26,13 @@ class handler(BaseHTTPRequestHandler):
                 'apikey': SUPABASE_KEY,
                 'Authorization': f'Bearer {SUPABASE_KEY}'
             }
-            resp = requests.get(
+            req = urllib.request.Request(
                 f"{SUPABASE_URL}/rest/v1/sync_logs?select=*&order=sync_date.desc&limit=50",
-                headers=headers, timeout=10
+                headers=headers
             )
-            logs = resp.json() if resp.status_code == 200 else []
-            self.wfile.write(json.dumps(logs).encode())
+            with urllib.request.urlopen(req, timeout=10, context=ssl_context) as resp:
+                logs = resp.read().decode('utf-8')
+                self.wfile.write(logs.encode())
         except Exception as e:
             self.wfile.write(json.dumps({"error": str(e)}).encode())
     
