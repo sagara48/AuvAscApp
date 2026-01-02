@@ -3,7 +3,10 @@
   "builds": [
     {
       "src": "api/*.py",
-      "use": "@vercel/python"
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "15mb"
+      }
     },
     {
       "src": "public/**",
@@ -11,21 +14,34 @@
     }
   ],
   "routes": [
-    { "src": "/api/sync", "dest": "/api/sync.py" },
-    { "src": "/api/sync/full", "dest": "/api/sync.py" },
-    { "src": "/api/status", "dest": "/api/status.py" },
-    { "src": "/api/logs", "dest": "/api/logs.py" },
-    { "src": "/(.*)", "dest": "/public/$1" }
-  ],
-  "functions": {
-    "api/sync.py": {
-      "maxDuration": 300,
-      "memory": 1024
+    {
+      "src": "/api/sync/full",
+      "dest": "/api/sync.py"
+    },
+    {
+      "src": "/api/sync",
+      "dest": "/api/sync.py"
+    },
+    {
+      "src": "/api/status",
+      "dest": "/api/status.py"
+    },
+    {
+      "src": "/api/logs",
+      "dest": "/api/logs.py"
+    },
+    {
+      "src": "/api/cron",
+      "dest": "/api/cron.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/public/$1"
     }
-  },
+  ],
   "crons": [
     {
-      "path": "/api/sync",
+      "path": "/api/cron",
       "schedule": "0 * * * *"
     }
   ]
