@@ -22,6 +22,16 @@ PROGILIFT_CODE = os.environ.get('PROGILIFT_CODE', 'AUVNB1')
 ssl_context = ssl.create_default_context()
 
 
+def safe_str(value, max_len: int = None) -> str:
+    """Convertit une valeur en string de façon sécurisée"""
+    if value is None:
+        return ''
+    s = str(value).strip()
+    if max_len:
+        return s[:max_len]
+    return s
+
+
 def http_request(url: str, method: str = 'GET', data: bytes = None, headers: dict = None, timeout: int = 60) -> tuple:
     """Requête HTTP simple avec urllib"""
     try:
@@ -234,11 +244,11 @@ def run_sync(full_sync: bool = False) -> Dict:
                 record = {
                     'id_wsoucont': id_ws,
                     'id_wcontrat': item.get('IDWCONTRAT'),
-                    'ascenseur': (item.get('ASCENSEUR') or '').strip()[:50],
+                    'ascenseur': safe_str(item.get('ASCENSEUR'), 50),
                     'updated_at': datetime.now().isoformat()
                 }
                 for i in range(1, 11):
-                    record[f'lib{i}'] = (item.get(f'LIB{i}') or '')[:100]
+                    record[f'lib{i}'] = safe_str(item.get(f'LIB{i}'), 100)
                     record[f'datepass{i}'] = item.get(f'DATEPASS{i}')
                 equip_records.append(record)
         
@@ -254,9 +264,9 @@ def run_sync(full_sync: bool = False) -> Dict:
             panne_records.append({
                 'id_panne': item.get('P0CLEUNIK'),
                 'id_wsoucont': item.get('IDWSOUCONT'),
-                'date_panne': str(item.get('DATE', '')),
-                'depanneur': (item.get('DEPANNEUR') or '').strip()[:100],
-                'libelle': (item.get('PANNES') or '')[:200],
+                'date_panne': safe_str(item.get('DATE')),
+                'depanneur': safe_str(item.get('DEPANNEUR'), 100),
+                'libelle': safe_str(item.get('PANNES'), 200),
                 'updated_at': datetime.now().isoformat()
             })
         
@@ -272,9 +282,9 @@ def run_sync(full_sync: bool = False) -> Dict:
         for item in arrets:
             supabase.insert('appareils_arret', {
                 'id_wsoucont': item.get('nIDSOUCONT'),
-                'date_appel': (item.get('sDateAppel') or '').strip(),
-                'heure_appel': (item.get('sHeureAppel') or '').strip(),
-                'motif': (item.get('sMotifAppel') or '').strip(),
+                'date_appel': safe_str(item.get('sDateAppel')),
+                'heure_appel': safe_str(item.get('sHeureAppel')),
+                'motif': safe_str(item.get('sMotifAppel')),
                 'updated_at': datetime.now().isoformat()
             })
         stats["appareils_arret"] = len(arrets)
