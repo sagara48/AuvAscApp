@@ -26799,119 +26799,94 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
     // Déclencher une synchronisation
     const triggerSync = async (fullSync = false) => {
         setSyncing(true);
-        setSyncProgress({ step: 0, message: fullSync ? 'Synchronisation complète en cours...' : 'Synchronisation incrémentale en cours...', total: 9 });
+        setSyncProgress({ step: 0, message: fullSync ? 'Synchronisation complète en cours...' : 'Synchronisation incrémentale en cours...', total: 1 });
         
         const startTime = Date.now();
-        const syncLog = {
-            id: Date.now(),
-            sync_date: new Date().toISOString(),
-            type: fullSync ? 'full' : 'incremental',
-            status: 'running',
-            equipements_count: 0,
-            pannes_count: 0,
-            duration_seconds: 0,
-            error_message: null
-        };
+        const apiUrl = progiliftConfig.apiEndpoint || '/api/sync';
+        const endpoint = fullSync ? `${apiUrl}/full` : apiUrl;
         
         try {
-            // Étape 1: Types d'appareils
-            setSyncProgress({ step: 1, message: '1/9 - Synchronisation types appareils...', total: 9 });
-            await new Promise(r => setTimeout(r, 500));
+            setSyncProgress({ step: 0, message: '🔄 Appel de l\'API Progilift...', total: 1 });
             
-            // Étape 2: Clients
-            setSyncProgress({ step: 2, message: '2/9 - Synchronisation clients...', total: 9 });
-            const { data: clients } = await db.from('progilift_clients').select('id');
-            await new Promise(r => setTimeout(r, 300));
-            
-            // Étape 3: Contrats
-            setSyncProgress({ step: 3, message: '3/9 - Synchronisation contrats...', total: 9 });
-            const { data: contrats } = await db.from('progilift_contrats').select('id');
-            await new Promise(r => setTimeout(r, 300));
-            
-            // Étape 4: Ascenseurs
-            setSyncProgress({ step: 4, message: '4/9 - Synchronisation ascenseurs...', total: 9 });
-            const { data: ascenseurs, error: ascError } = await db.from('progilift_ascenseurs').select('*');
-            if (ascError) throw ascError;
-            syncLog.equipements_count = ascenseurs?.length || 0;
-            await new Promise(r => setTimeout(r, 500));
-            
-            // Étape 5: Contrôles
-            setSyncProgress({ step: 5, message: '5/9 - Synchronisation contrôles...', total: 9 });
-            await new Promise(r => setTimeout(r, 300));
-            
-            // Étape 6: Devis
-            setSyncProgress({ step: 6, message: '6/9 - Synchronisation devis...', total: 9 });
-            await new Promise(r => setTimeout(r, 300));
-            
-            // Étape 7: Pannes
-            setSyncProgress({ step: 7, message: '7/9 - Synchronisation pannes...', total: 9 });
-            try {
-                const { data: pannes } = await db.from('progilift_pannes').select('id');
-                syncLog.pannes_count = pannes?.length || 0;
-            } catch (e) { /* Table peut ne pas exister */ }
-            await new Promise(r => setTimeout(r, 300));
-            
-            // Étape 8: Hors contrat
-            setSyncProgress({ step: 8, message: '8/9 - Synchronisation hors contrat...', total: 9 });
-            await new Promise(r => setTimeout(r, 300));
-            
-            // Étape 9: Finalisation
-            setSyncProgress({ step: 9, message: '9/9 - Finalisation...', total: 9 });
-            await new Promise(r => setTimeout(r, 500));
-            
-            // Succès
-            syncLog.status = 'success';
-            syncLog.duration_seconds = (Date.now() - startTime) / 1000;
-            
-            // Sauvegarder le log (toujours en local, optionnellement en BDD)
-            const localLogs = JSON.parse(localStorage.getItem('progilift_sync_logs') || '[]');
-            localLogs.unshift({
-                ...syncLog,
-                id: Date.now()
-            });
-            localStorage.setItem('progilift_sync_logs', JSON.stringify(localLogs.slice(0, 50)));
-            
-            // Essayer aussi de sauvegarder en BDD si la table existe
-            try {
-                const { error } = await db.from('sync_logs').insert({
-                    sync_date: syncLog.sync_date,
-                    status: syncLog.status,
-                    equipements_count: syncLog.equipements_count,
-                    pannes_count: syncLog.pannes_count,
-                    duration_seconds: syncLog.duration_seconds
-                });
-                if (error) {
-                    console.log('Erreur sync_logs:', error.message);
+            const response = await fetch(endpoint, { 
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
                 }
-            } catch (e) {
-                console.log('Sauvegarde locale uniquement');
+            });
+            
+            const data = await response.json();
+            
+            if (data.status === 'success') {
+                // Succès - créer le log
+                const syncLog = {
+                    id: Date.now(),
+                    sync_date: new Date().toISOString(),
+                    status: 'success',
+                    equipements_count: data.stats?.equipements || 0,
+                    pannes_count: data.stats?.pannes || 0,
+                    duration_seconds: data.duration || ((Date.now() - startTime) / 1000)
+                };
+                
+                // Sauvegarder le log en local
+                const localLogs = JSON.parse(localStorage.getItem('progilift_sync_logs') || '[]');
+                localLogs.unshift(syncLog);
+                localStorage.setItem('progilift_sync_logs', JSON.stringify(localLogs.slice(0, 50)));
+                
+                // Essayer aussi de sauvegarder en BDD
+                try {
+                    await db.from('sync_logs').insert({
+                        sync_date: syncLog.sync_date,
+                        status: syncLog.status,
+                        equipements_count: syncLog.equipements_count,
+                        pannes_count: syncLog.pannes_count,
+                        duration_seconds: syncLog.duration_seconds
+                    });
+                } catch (e) {
+                    console.log('Sauvegarde locale uniquement');
+                }
+                
+                localStorage.setItem('progilift_last_sync', new Date().toISOString());
+                
+                setSyncProgress({ 
+                    step: 1, 
+                    message: `✅ Terminé ! ${syncLog.equipements_count} équipements, ${syncLog.pannes_count} pannes (${syncLog.duration_seconds.toFixed(1)}s)`, 
+                    total: 1, 
+                    success: true 
+                });
+                showToast(`Synchronisation terminée: ${syncLog.equipements_count} équipements`, 'success');
+                
+                // Rafraîchir les données
+                setTimeout(() => {
+                    refresh();
+                    loadSyncLogs();
+                    setSyncing(false);
+                    setSyncProgress(null);
+                }, 2000);
+                
+            } else {
+                throw new Error(data.message || 'Erreur de synchronisation');
             }
-            
-            localStorage.setItem('progilift_last_sync', new Date().toISOString());
-            
-            setSyncProgress({ step: 9, message: `✅ Terminé ! ${syncLog.equipements_count} équipements, ${syncLog.pannes_count} pannes`, total: 9, success: true });
-            showToast(`Synchronisation terminée: ${syncLog.equipements_count} équipements`, 'success');
-            
-            // Rafraîchir les données
-            setTimeout(() => {
-                refresh();
-                loadSyncLogs();
-                setSyncing(false);
-                setSyncProgress(null);
-            }, 2000);
             
         } catch (error) {
             console.error('Sync error:', error);
-            syncLog.status = 'error';
-            syncLog.error_message = error.message;
-            syncLog.duration_seconds = (Date.now() - startTime) / 1000;
             
             // Sauvegarder le log d'erreur
+            const syncLog = {
+                id: Date.now(),
+                sync_date: new Date().toISOString(),
+                status: 'error',
+                equipements_count: 0,
+                pannes_count: 0,
+                duration_seconds: (Date.now() - startTime) / 1000,
+                error_message: error.message
+            };
+            
             const localLogs = JSON.parse(localStorage.getItem('progilift_sync_logs') || '[]');
             localLogs.unshift(syncLog);
             localStorage.setItem('progilift_sync_logs', JSON.stringify(localLogs.slice(0, 50)));
             
-            setSyncProgress({ step: 0, message: `❌ Erreur: ${error.message}`, total: 9, error: true });
+            setSyncProgress({ step: 0, message: `❌ Erreur: ${error.message}`, total: 1, error: true });
             showToast('Erreur de synchronisation: ' + error.message, 'error');
             
             setTimeout(() => {
