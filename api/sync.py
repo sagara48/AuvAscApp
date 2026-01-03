@@ -766,6 +766,103 @@ def debug_cloud_xml():
     return {"status": "debug", "results": results}
 
 # ============================================================================
+# SYNCHRONISATION CLIENTS ET CONTRATS
+# ============================================================================
+
+def sync_clients():
+    """Synchronise tous les clients depuis ProgiLift"""
+    wsid = get_auth_with_retry()
+    if not wsid:
+        return {"status": "error", "message": "Auth failed"}
+    
+    resp = progilift_call("get_Synchro_Wclient", {"dhDerniereMajFichier": "2000-01-01T00:00:00"}, wsid, 120)
+    items = parse_items(resp, "tabListeClients")
+    
+    clients_list = []
+    for c in items:
+        cid = safe_int(c.get('IDWCLIENT'))
+        if cid:
+            clients_list.append({
+                'id_wclient': cid,
+                'cod': safe_str(c.get('COD'), 20),
+                'nom': safe_str(c.get('NOM'), 200),
+                'adresse': safe_str(c.get('ADRESSE'), 500),
+                'ville': safe_str(c.get('VILLE'), 100),
+                'codpost': safe_str(c.get('CODPOST'), 10),
+                'telephone': safe_str(c.get('TELEPHONE'), 50),
+                'fax': safe_str(c.get('FAX'), 50),
+                'responsf': safe_str(c.get('RESPONSF'), 500),
+                'obs': safe_str(c.get('OBS'), 500),
+                'refcli': safe_str(c.get('REFCLI'), 100),
+                'cle': safe_str(c.get('CLE_'), 50),
+                'emailclt': safe_str(c.get('EMAILCLT'), 100),
+                'notecli': safe_str(c.get('NOTECLI'), 1000),
+                'data': json.dumps(c),
+                'updated_at': datetime.now().isoformat()
+            })
+    
+    # Upsert par batches de 50
+    for i in range(0, len(clients_list), 50):
+        supabase_upsert('clients', clients_list[i:i+50])
+    
+    return {
+        "status": "success",
+        "step": "clients",
+        "clients": len(clients_list),
+        "message": f"{len(clients_list)} clients synchronisés"
+    }
+
+def sync_contrats():
+    """Synchronise tous les contrats depuis ProgiLift"""
+    wsid = get_auth_with_retry()
+    if not wsid:
+        return {"status": "error", "message": "Auth failed"}
+    
+    resp = progilift_call("get_Synchro_Wcontrat", {"dhDerniereMajFichier": "2000-01-01T00:00:00"}, wsid, 120)
+    items = parse_items(resp, "tabListeWcontrat")
+    
+    contrats_list = []
+    for c in items:
+        cid = safe_int(c.get('IDWCONTRAT'))
+        if cid:
+            contrats_list.append({
+                'id_wcontrat': cid,
+                'id_wclient': safe_int(c.get('IDWCLIENT')),
+                'ascenseur': safe_str(c.get('ASCENSEUR'), 50),
+                'immeuble': safe_str(c.get('IMMEUBLE'), 100),
+                'numero': safe_str(c.get('NUMERO'), 20),
+                'adres1': safe_str(c.get('ADRES1'), 500),
+                'adres2': safe_str(c.get('ADRES2'), 500),
+                'batiment': safe_str(c.get('BATIMENT'), 50),
+                'ville': safe_str(c.get('VILLE'), 100),
+                'cp': safe_str(c.get('CP'), 20),
+                'secteur': safe_str(c.get('SECTEUR'), 20),
+                'ordre': safe_int(c.get('ORDRE')),
+                'rescop': safe_str(c.get('RESCOP'), 100),
+                'telcop': safe_str(c.get('TELCOP'), 50),
+                'rescli': safe_str(c.get('RESCLI'), 100),
+                'telcli': safe_str(c.get('TELCLI'), 50),
+                'gardien': safe_str(c.get('GARDIEN'), 100),
+                'telgar': safe_str(c.get('TELGAR'), 50),
+                'cod': safe_str(c.get('COD'), 20),
+                'note': safe_str(c.get('NOTE'), 1000),
+                'date_contrat': safe_str(c.get('DATE'), 20),
+                'data': json.dumps(c),
+                'updated_at': datetime.now().isoformat()
+            })
+    
+    # Upsert par batches de 50
+    for i in range(0, len(contrats_list), 50):
+        supabase_upsert('contrats', contrats_list[i:i+50])
+    
+    return {
+        "status": "success",
+        "step": "contrats",
+        "contrats": len(contrats_list),
+        "message": f"{len(contrats_list)} contrats synchronisés"
+    }
+
+# ============================================================================
 # ENDPOINTS OPTIONNELS (pour extensions futures)
 # ============================================================================
 
@@ -978,11 +1075,19 @@ class handler(BaseHTTPRequestHandler):
                 result = sync_pannes(period)
             elif step == '4':
                 result = sync_devis(period)
+            elif step == '5':
+                result = sync_clients()
+            elif step == '6':
+                result = sync_contrats()
             elif step == 'debug_devis':
                 result = debug_devis_xml()
             elif step == 'debug_cloud':
                 result = debug_cloud_xml()
             # Endpoints optionnels
+            elif step == 'clients':
+                result = sync_clients()
+            elif step == 'contrats':
+                result = sync_contrats()
             elif step == 'missions':
                 result = sync_missions(period)
             elif step == 'controles':
@@ -1009,12 +1114,16 @@ class handler(BaseHTTPRequestHandler):
                         "step2": "GET ?step=2&sector=0 → Équipements + Passages (0-21)",
                         "step3": "GET ?step=3&period=0 → Pannes (0-1)",
                         "step4": "GET ?step=4&period=0 → Devis (0-3)",
+                        "step5": "GET ?step=5 → Clients",
+                        "step6": "GET ?step=6 → Contrats",
+                        "clients": "GET ?step=clients → Clients (alias)",
+                        "contrats": "GET ?step=contrats → Contrats (alias)",
                         "missions": "GET ?step=missions&period=0 → Historique missions (optionnel)",
                         "controles": "GET ?step=controles&period=0 → Contrôles (optionnel)",
                         "detail": "GET ?step=detail&id=1234 → Détail équipement (optionnel)"
                     },
-                    "full_sync_sequence": "?step=1 → ?step=2&sector=0..21 → ?step=3&period=0..1 → ?step=4&period=0..3",
-                    "note": "4 étapes: (1) Arrêts, (2) Équipements+Passages (22 secteurs), (3) Pannes (2 périodes), (4) Devis (4 périodes)",
+                    "full_sync_sequence": "?step=1 → ?step=2&sector=0..21 → ?step=3&period=0..1 → ?step=4&period=0..3 → ?step=5 → ?step=6",
+                    "note": "6 étapes: (1) Arrêts, (2) Équipements+Passages (22 secteurs), (3) Pannes (2 périodes), (4) Devis (4 périodes), (5) Clients, (6) Contrats",
                     "progilift_info": {
                         "ws_url": WS_URL,
                         "available_operations": [
