@@ -642,22 +642,23 @@ def sync_devis(period_idx):
     
     devis_list = []
     for d in items:
-        did = safe_int(d.get('IDDEVIS')) or safe_int(d.get('ID'))
+        # Champs réels de l'API (CamelCase)
+        did = safe_int(d.get('IDDevis'))
         if did:
             devis_list.append({
                 'id_devis': did,
-                'id_wsoucont': safe_int(d.get('IDWSOUCONT')),
-                'numero': safe_str(d.get('NUMERO'), 50),
-                'date_devis': safe_str(d.get('DATE'), 20),
-                'objet': safe_str(d.get('OBJET'), 500),
-                'montant_ht': safe_float(d.get('MONTANTHT')),
-                'montant_ttc': safe_float(d.get('MONTANTTTC')),
+                'id_wsoucont': safe_int(d.get('IDSOUCONT')),
+                'numero': safe_str(d.get('Numero_devis'), 50),
+                'date_devis': safe_str(d.get('date_devis'), 20),
+                'objet': safe_str(d.get('REFERENCE_DEVIS'), 500),
+                'montant_ht': safe_float(d.get('MontantHT')),
+                'montant_ttc': safe_float(d.get('MontantTTC')),
                 'tva': safe_float(d.get('TVA')),
-                'statut': safe_str(d.get('STATUT'), 50),
-                'date_statut': safe_str(d.get('DATESTATUT'), 20),
-                'client': safe_str(d.get('CLIENT'), 200),
-                'adresse': safe_str(d.get('ADRESSE'), 300),
-                'commentaire': safe_str(d.get('COMMENTAIRE'), 1000),
+                'statut': safe_str(d.get('etat_devis'), 50),
+                'date_statut': safe_str(d.get('Date_Acceptation'), 20),
+                'client': safe_str(d.get('cod_client'), 200),
+                'adresse': safe_str(d.get('Numero_affaire'), 300),
+                'commentaire': safe_str(d.get('TitreDevis'), 1000),
                 'data': json.dumps(d),
                 'updated_at': datetime.now().isoformat()
             })
