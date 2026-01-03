@@ -97,6 +97,19 @@ def supabase_delete(table):
     status, _ = http_request(url, 'DELETE', None, headers, 30)
     return status in [200, 204]
 
+def supabase_update(table, id_field, id_value, data):
+    if not SUPABASE_URL or not data:
+        return False
+    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{table}?{id_field}=eq.{id_value}"
+    headers = {
+        'apikey': SUPABASE_KEY,
+        'Authorization': f'Bearer {SUPABASE_KEY}',
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+    }
+    status, _ = http_request(url, 'PATCH', json.dumps(data).encode(), headers, 30)
+    return status in [200, 204]
+
 def progilift_call(method, params, wsid=None, timeout=30):
     ws_url = "https://ws.progilift.fr/WS_PROGILIFT_20230419_WEB/awws/WS_Progilift_20230419.awws"
     
@@ -137,28 +150,6 @@ def get_auth():
             return m.group(1)
     return None
 
-# ==== DEBUG ====
-def debug_info():
-    wsid = get_auth()
-    if not wsid:
-        return {"status": "error", "message": "Auth failed"}
-    
-    # Arrêts - données brutes
-    resp_arrets = progilift_call("get_AppareilsArret", {}, wsid, 30)
-    arrets = parse_items(resp_arrets, "tabListeArrets")
-    
-    return {
-        "status": "debug",
-        "wsid": wsid[:10] + "...",
-        "sectors": SECTORS,
-        "sectors_count": len(SECTORS),
-        "arrets": {
-            "count": len(arrets),
-            "sample": arrets[:5] if arrets else [],
-            "xml_sample": resp_arrets[:2000] if resp_arrets else "No response"
-        }
-    }
-
 # ==== STEP 1: Arrêts ====
 def sync_arrets():
     wsid = get_auth()
@@ -167,15 +158,6 @@ def sync_arrets():
     
     resp = progilift_call("get_AppareilsArret", {}, wsid, 30)
     arrets = parse_items(resp, "tabListeArrets")
-    
-    if not arrets:
-        return {
-            "status": "success",
-            "step": 1,
-            "arrets": 0,
-            "message": "Aucun appareil à l'arrêt actuellement",
-            "next": "?step=2&sector=0"
-        }
     
     supabase_delete('appareils_arret')
     inserted = 0
@@ -194,14 +176,14 @@ def sync_arrets():
     
     return {"status": "success", "step": 1, "arrets": len(arrets), "inserted": inserted, "next": "?step=2&sector=0"}
 
-# ==== STEP 2: Équipements par secteur ====
+# ==== STEP 2: Équipements par secteur (Wsoucont) ====
 def sync_equipements(sector_idx):
     wsid = get_auth()
     if not wsid:
         return {"status": "error", "message": "Auth failed"}
     
     if sector_idx >= len(SECTORS):
-        return {"status": "success", "step": 2, "message": "All 22 sectors done", "next": "?step=3&period=0"}
+        return {"status": "success", "step": 2, "message": "All 22 sectors done", "next": "?step=2b&sector=0"}
     
     sector = SECTORS[sector_idx]
     resp = progilift_call("get_Synchro_Wsoucont", {
@@ -222,9 +204,23 @@ def sync_equipements(sector_idx):
                 'ascenseur': safe_str(e.get('ASCENSEUR'), 50),
                 'adresse': safe_str(e.get('DES2'), 200),
                 'ville': safe_str(e.get('DES3'), 200),
+                'des4': safe_str(e.get('DES4'), 200),
+                'des6': safe_str(e.get('DES6'), 200),
+                'des7': safe_str(e.get('DES7'), 200),
                 'div1': safe_str(e.get('DIV1'), 100),
                 'div2': safe_str(e.get('DIV2'), 100),
+                'div3': safe_str(e.get('DIV3'), 100),
+                'div4': safe_str(e.get('DIV4'), 100),
+                'div5': safe_str(e.get('DIV5'), 100),
                 'div6': safe_str(e.get('DIV6'), 100),
+                'div7': safe_str(e.get('DIV7'), 100),
+                'div8': safe_str(e.get('DIV8'), 100),
+                'div9': safe_str(e.get('DIV9'), 100),
+                'div10': safe_str(e.get('DIV10'), 100),
+                'div11': safe_str(e.get('DIV11'), 200),
+                'div12': safe_str(e.get('DIV12'), 200),
+                'div13': safe_str(e.get('DIV13'), 200),
+                'div14': safe_str(e.get('DIV14'), 200),
                 'div15': safe_str(e.get('DIV15'), 200),
                 'numappcli': safe_str(e.get('NUMAPPCLI'), 50),
                 'jan': safe_int(e.get('JAN')),
@@ -247,7 +243,7 @@ def sync_equipements(sector_idx):
         supabase_upsert('equipements', equip_list[i:i+30])
     
     next_idx = sector_idx + 1
-    next_url = f"?step=2&sector={next_idx}" if next_idx < len(SECTORS) else "?step=3&period=0"
+    next_url = f"?step=2&sector={next_idx}" if next_idx < len(SECTORS) else "?step=2b&sector=0"
     
     return {
         "status": "success",
@@ -255,6 +251,47 @@ def sync_equipements(sector_idx):
         "sector": sector,
         "sector_index": f"{sector_idx + 1}/{len(SECTORS)}",
         "equipements": len(equip_list),
+        "next": next_url
+    }
+
+# ==== STEP 2b: 10 derniers passages (Wsoucont2) ====
+def sync_passages(sector_idx):
+    wsid = get_auth()
+    if not wsid:
+        return {"status": "error", "message": "Auth failed"}
+    
+    if sector_idx >= len(SECTORS):
+        return {"status": "success", "step": "2b", "message": "All passages done", "next": "?step=3&period=0"}
+    
+    sector = SECTORS[sector_idx]
+    resp = progilift_call("get_Synchro_Wsoucont2", {
+        "dhDerniereMajFichier": "2000-01-01T00:00:00",
+        "sListeSecteursTechnicien": sector
+    }, wsid, 90)
+    
+    items = parse_items(resp, "tabListeWsoucont2")
+    updated = 0
+    
+    for e in items:
+        id_ws = safe_int(e.get('IDWSOUCONT'))
+        if id_ws:
+            update_data = {'updated_at': datetime.now().isoformat()}
+            for i in range(1, 11):
+                update_data[f'lib{i}'] = safe_str(e.get(f'LIB{i}'), 100)
+                update_data[f'datepass{i}'] = safe_int(e.get(f'DATEPASS{i}'))
+            
+            if supabase_update('equipements', 'id_wsoucont', id_ws, update_data):
+                updated += 1
+    
+    next_idx = sector_idx + 1
+    next_url = f"?step=2b&sector={next_idx}" if next_idx < len(SECTORS) else "?step=3&period=0"
+    
+    return {
+        "status": "success",
+        "step": "2b",
+        "sector": sector,
+        "sector_index": f"{sector_idx + 1}/{len(SECTORS)}",
+        "passages_updated": updated,
         "next": next_url
     }
 
@@ -283,10 +320,17 @@ def sync_pannes(period_idx):
                 'id_panne': pid,
                 'id_wsoucont': safe_int(p.get('IDWSOUCONT')),
                 'date_panne': safe_str(p.get('DATE'), 20),
+                'jour': safe_str(p.get('JOUR'), 20),
                 'depanneur': safe_str(p.get('DEPANNEUR'), 100),
                 'libelle': safe_str(p.get('PANNES'), 200),
                 'heure_inter': safe_str(p.get('INTER'), 20),
                 'heure_fin': safe_str(p.get('HRFININTER'), 20),
+                'duree': safe_int(p.get('DUREE')),
+                'ensemble': safe_int(p.get('ENSEMBLE')),
+                'local_code': safe_int(p.get('LOCAL_')),
+                'cause': safe_int(p.get('CAUSE')),
+                'motif': safe_str(p.get('MOTIF'), 100),
+                'note': safe_str(p.get('NOTE2'), 500),
                 'data': json.dumps(p),
                 'updated_at': datetime.now().isoformat()
             })
@@ -313,6 +357,72 @@ def sync_pannes(period_idx):
     
     return result
 
+# ==== CRON: Sync rapide (arrêts + pannes récentes) ====
+def sync_cron():
+    """Sync rapide pour le cron horaire - arrêts + pannes récentes uniquement"""
+    start = datetime.now()
+    stats = {"arrets": 0, "pannes": 0}
+    
+    wsid = get_auth()
+    if not wsid:
+        return {"status": "error", "message": "Auth failed"}
+    
+    # 1. Arrêts
+    resp = progilift_call("get_AppareilsArret", {}, wsid, 30)
+    arrets = parse_items(resp, "tabListeArrets")
+    supabase_delete('appareils_arret')
+    for a in arrets:
+        supabase_insert('appareils_arret', {
+            'id_wsoucont': safe_int(a.get('nIDSOUCONT')),
+            'id_panne': safe_int(a.get('nClepanne')),
+            'date_appel': safe_str(a.get('sDateAppel'), 20),
+            'heure_appel': safe_str(a.get('sHeureAppel'), 20),
+            'motif': safe_str(a.get('sMotifAppel'), 500),
+            'demandeur': safe_str(a.get('sDemandeur'), 100),
+            'updated_at': datetime.now().isoformat()
+        })
+    stats["arrets"] = len(arrets)
+    
+    # 2. Pannes récentes (dernier mois)
+    resp = progilift_call("get_Synchro_Wpanne", {"dhDerniereMajFichier": "2025-12-01T00:00:00"}, wsid, 60)
+    items = parse_items(resp, "tabListeWpanne")
+    pannes_list = []
+    for p in items:
+        pid = safe_int(p.get('P0CLEUNIK'))
+        if pid:
+            pannes_list.append({
+                'id_panne': pid,
+                'id_wsoucont': safe_int(p.get('IDWSOUCONT')),
+                'date_panne': safe_str(p.get('DATE'), 20),
+                'depanneur': safe_str(p.get('DEPANNEUR'), 100),
+                'libelle': safe_str(p.get('PANNES'), 200),
+                'heure_inter': safe_str(p.get('INTER'), 20),
+                'heure_fin': safe_str(p.get('HRFININTER'), 20),
+                'data': json.dumps(p),
+                'updated_at': datetime.now().isoformat()
+            })
+    for i in range(0, len(pannes_list), 50):
+        supabase_upsert('pannes', pannes_list[i:i+50])
+    stats["pannes"] = len(pannes_list)
+    
+    duration = (datetime.now() - start).total_seconds()
+    
+    # Log
+    supabase_insert('sync_logs', {
+        'sync_date': datetime.now().isoformat(),
+        'status': 'cron',
+        'equipements_count': 0,
+        'pannes_count': stats["pannes"],
+        'duration_seconds': round(duration, 1)
+    })
+    
+    return {
+        "status": "success",
+        "mode": "cron",
+        "stats": stats,
+        "duration": round(duration, 1)
+    }
+
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self._respond()
@@ -332,33 +442,36 @@ class handler(BaseHTTPRequestHandler):
             parsed = urlparse(self.path)
             params = parse_qs(parsed.query)
             
-            step = int(params.get('step', ['0'])[0])
+            step = params.get('step', ['0'])[0]
             sector = int(params.get('sector', ['0'])[0])
             period = int(params.get('period', ['0'])[0])
-            debug = params.get('debug', ['0'])[0] == '1'
+            mode = params.get('mode', [''])[0]
             
-            if debug:
-                result = debug_info()
-            elif step == 1:
+            if mode == 'cron':
+                result = sync_cron()
+            elif step == '1':
                 result = sync_arrets()
-            elif step == 2:
+            elif step == '2':
                 result = sync_equipements(sector)
-            elif step == 3:
+            elif step == '2b':
+                result = sync_passages(sector)
+            elif step == '3':
                 result = sync_pannes(period)
             else:
                 result = {
                     "status": "ready",
-                    "message": "Sync par étapes - 22 secteurs",
-                    "sectors": SECTORS,
+                    "message": "Progilift Sync API",
                     "sectors_count": len(SECTORS),
                     "periods_count": len(PERIODS),
-                    "usage": {
-                        "debug": "?debug=1 → Voir données brutes arrêts",
+                    "endpoints": {
+                        "cron": "?mode=cron → Sync rapide (arrêts + pannes récentes)",
                         "step1": "?step=1 → Arrêts",
                         "step2": "?step=2&sector=0 → Équipements (0-21)",
+                        "step2b": "?step=2b&sector=0 → 10 derniers passages (0-21)",
                         "step3": "?step=3&period=0 → Pannes (0-6)"
                     },
-                    "start": "?step=1"
+                    "start_full": "?step=1",
+                    "start_cron": "?mode=cron"
                 }
         except Exception as e:
             result = {"status": "error", "message": str(e), "trace": traceback.format_exc()[:500]}
