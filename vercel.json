@@ -1,10 +1,21 @@
 {
   "version": 2,
   "functions": {
-    "api/sync.py": {
+   "api/sync.py": {
       "maxDuration": 300,
       "memory": 1024
+    },
+    "api/cron.py": {
+      "maxDuration": 120,
+      "memory": 512
+    },
+    "api/status.py": {
+      "maxDuration": 10
+    },
+    "api/logs.py": {
+      "maxDuration": 10
     }
+
     },
   "rewrites": [
     { "source": "/api/sync/full", "destination": "/api/sync" },
