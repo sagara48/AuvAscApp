@@ -26849,7 +26849,7 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
                     setStats({ ...totalStats });
                     addLog(`✅ Secteur ${step2.sector}: ${step2.equipements} équipements`, 'success');
                 }
-                await new Promise(r => setTimeout(r, 200));
+                await new Promise(r => setTimeout(r, 3000)); // Délai augmenté pour pannes
             }
             setDoneSteps(prev => [...prev, '2']);
             setActiveStep(null);
@@ -26872,7 +26872,7 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
                     setStats({ ...totalStats });
                     addLog(`✅ Passages secteur ${step2b.sector}: ${step2b.passages_updated}`, 'success');
                 }
-                await new Promise(r => setTimeout(r, 200));
+                await new Promise(r => setTimeout(r, 3000)); // Délai augmenté pour pannes
             }
             setDoneSteps(prev => [...prev, '2b']);
             setActiveStep(null);
@@ -26895,7 +26895,7 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
                     setStats({ ...totalStats });
                     addLog(`✅ Période ${step3.period}: ${step3.pannes} pannes`, 'success');
                 }
-                await new Promise(r => setTimeout(r, 200));
+                await new Promise(r => setTimeout(r, 3000)); // Délai augmenté pour pannes
             }
             setDoneSteps(prev => [...prev, '3']);
             setActiveStep(null);
@@ -26918,7 +26918,7 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
                     setStats({ ...totalStats });
                     addLog(`✅ Période ${step4.period}: ${step4.devis} devis`, 'success');
                 }
-                await new Promise(r => setTimeout(r, 200));
+                await new Promise(r => setTimeout(r, 3000)); // Délai augmenté pour pannes
             }
             setDoneSteps(prev => [...prev, '4']);
             setActiveStep(null);
