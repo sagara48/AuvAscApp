@@ -26700,14 +26700,26 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
     const [apiUrl, setApiUrl] = useState(localStorage.getItem('progilift_api_url') || 'https://auv-asc-app.vercel.app');
     const [isRunning, setIsRunning] = useState(false);
     const [shouldStop, setShouldStop] = useState(false);
-    const [progress, setProgress] = useState({ percent: 0, text: 'En attente...' });
-    const [stats, setStats] = useState({ arrets: 0, equipements: 0, passages: 0, pannes: 0 });
-    const [logs, setLogs] = useState([{ time: new Date().toLocaleTimeString(), msg: 'Prêt à synchroniser...', type: 'info' }]);
+    const [progress, setProgress] = useState({ percent: 0, text: 'Cliquez sur "Sync Complète" pour démarrer' });
+    const [stats, setStats] = useState({ arrets: 0, equipements: 0, passages: 0, pannes: 0, devis: 0 });
+    const [logs, setLogs] = useState([]);
+    const [history, setHistory] = useState([]);
+    const [apiInfo, setApiInfo] = useState(null);
+    const [activeStep, setActiveStep] = useState(null);
+    const [doneSteps, setDoneSteps] = useState([]);
     const shouldStopRef = useRef(false);
     const logsEndRef = useRef(null);
     
     const TOTAL_SECTORS = 22;
     const TOTAL_PERIODS = 7;
+    const TOTAL_DEVIS_PERIODS = 4;
+    
+    // Charger l'historique au démarrage
+    useEffect(() => {
+        const savedHistory = JSON.parse(localStorage.getItem('progilift_sync_history') || '[]');
+        setHistory(savedHistory);
+        addLog('Dashboard initialisé. Configurez l\'URL API et cliquez sur "Vérifier Status".', 'info');
+    }, []);
     
     // Auto-scroll logs
     useEffect(() => {
@@ -26716,20 +26728,18 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
         }
     }, [logs]);
     
-    // Fonction pour ajouter un log
+    // Ajouter un log
     const addLog = (msg, type = 'info') => {
         const time = new Date().toLocaleTimeString();
-        setLogs(prev => [...prev, { time, msg, type }]);
+        setLogs(prev => [...prev.slice(-199), { time, msg, type }]);
     };
     
-    // Fonction pour appeler l'API
+    // Appeler l'API
     const callApi = async (endpoint) => {
         const baseUrl = apiUrl.replace(/\/$/, '');
         const url = `${baseUrl}/api/sync${endpoint}`;
-        
         const response = await fetch(url);
         const text = await response.text();
-        
         try {
             return JSON.parse(text);
         } catch {
@@ -26737,142 +26747,189 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
         }
     };
     
+    // Sauvegarder config
+    const saveConfig = () => {
+        if (!apiUrl.trim()) {
+            addLog('Veuillez entrer une URL API', 'error');
+            showToast('URL API requise', 'error');
+            return;
+        }
+        localStorage.setItem('progilift_api_url', apiUrl);
+        addLog('Configuration sauvegardée: ' + apiUrl, 'success');
+        showToast('Configuration sauvegardée', 'success');
+    };
+    
     // Vérifier le status
     const checkStatus = async () => {
+        if (!apiUrl.trim()) {
+            addLog('Veuillez entrer une URL API', 'error');
+            return;
+        }
+        addLog('Vérification du status API...', 'info');
         try {
-            addLog('Vérification du status...', 'info');
             const data = await callApi('');
-            addLog(`Status: ${data.status} - ${data.sectors_count || 0} secteurs, ${data.periods_count || 0} périodes`, 'success');
-            showToast('Connexion API vérifiée avec succès', 'success');
+            if (data.status === 'ready') {
+                addLog('API connectée avec succès!', 'success');
+                setApiInfo({
+                    version: data.version || 'N/A',
+                    sectors: data.config?.sectors_count || 22,
+                    periods: data.config?.periods_count || 7,
+                    devisPeriods: data.config?.devis_periods_count || 4,
+                    operations: data.progilift_info?.available_operations?.length || 0
+                });
+                if (data.progilift_info?.available_operations) {
+                    addLog(`${data.progilift_info.available_operations.length} opérations Progilift disponibles`, 'info');
+                }
+                showToast('API connectée avec succès!', 'success');
+            } else {
+                addLog('Réponse inattendue: ' + JSON.stringify(data), 'warning');
+            }
         } catch (e) {
-            addLog(`Erreur: ${e.message}`, 'error');
-            showToast('Erreur de connexion: ' + e.message, 'error');
+            addLog('Erreur de connexion: ' + e.message, 'error');
+            showToast('Erreur: ' + e.message, 'error');
+            setApiInfo(null);
         }
     };
     
-    // Synchronisation complète en 4 étapes
+    // Sauvegarder dans l'historique
+    const saveToHistory = (entry) => {
+        const newHistory = [entry, ...history].slice(0, 50);
+        setHistory(newHistory);
+        localStorage.setItem('progilift_sync_history', JSON.stringify(newHistory));
+    };
+    
+    // Synchronisation complète
     const startFullSync = async () => {
-        if (isRunning) return;
+        if (isRunning || !apiUrl.trim()) {
+            if (!apiUrl.trim()) addLog('Veuillez configurer l\'URL API', 'error');
+            return;
+        }
         
         setIsRunning(true);
         shouldStopRef.current = false;
         setShouldStop(false);
-        setStats({ arrets: 0, equipements: 0, passages: 0, pannes: 0 });
-        setLogs([]);
+        setStats({ arrets: 0, equipements: 0, passages: 0, pannes: 0, devis: 0 });
+        setActiveStep(null);
+        setDoneSteps([]);
         
-        let totalEquip = 0;
-        let totalPannes = 0;
-        let totalArrets = 0;
-        let totalPassages = 0;
         const startTime = Date.now();
+        let totalStats = { arrets: 0, equipements: 0, passages: 0, pannes: 0, devis: 0 };
+        addLog('🚀 Démarrage de la synchronisation complète...', 'info');
         
         try {
-            // ============================================
-            // STEP 1: Arrêts
-            // ============================================
-            addLog('🔍 Étape 1/4: Synchronisation des appareils à l\'arrêt...', 'info');
-            setProgress({ percent: 2, text: 'Étape 1/4 - Arrêts' });
+            // Step 1: Arrêts
+            setActiveStep('1');
+            setProgress({ percent: 2, text: 'Étape 1/5 - Arrêts' });
+            addLog('📥 Étape 1/5: Récupération des arrêts...', 'info');
             
             const step1 = await callApi('?step=1');
             if (step1.status === 'error') throw new Error(step1.message);
             
-            totalArrets = step1.arrets || 0;
-            setStats(prev => ({ ...prev, arrets: totalArrets }));
-            addLog(`✅ Arrêts: ${totalArrets} appareils`, 'success');
+            totalStats.arrets = step1.arrets || 0;
+            setStats({ ...totalStats });
+            addLog(`✅ Arrêts: ${totalStats.arrets} appareils`, 'success');
+            setDoneSteps(prev => [...prev, '1']);
+            setActiveStep(null);
             
             if (shouldStopRef.current) throw new Error('Arrêt demandé');
             
-            // ============================================
-            // STEP 2: Équipements (22 secteurs)
-            // ============================================
-            addLog(`🔍 Étape 2/4: Synchronisation des équipements (${TOTAL_SECTORS} secteurs)...`, 'info');
+            // Step 2: Équipements
+            setActiveStep('2');
+            addLog(`📥 Étape 2/5: Équipements (${TOTAL_SECTORS} secteurs)...`, 'info');
             
-            for (let sectorIdx = 0; sectorIdx < TOTAL_SECTORS && !shouldStopRef.current; sectorIdx++) {
-                const progressPercent = 5 + (sectorIdx / TOTAL_SECTORS) * 30;
-                setProgress({ percent: Math.round(progressPercent), text: `Étape 2/4 - Équipements: Secteur ${sectorIdx + 1}/${TOTAL_SECTORS}` });
+            for (let i = 0; i < TOTAL_SECTORS && !shouldStopRef.current; i++) {
+                const pct = 5 + (i / TOTAL_SECTORS) * 20;
+                setProgress({ percent: Math.round(pct), text: `Étape 2/5 - Secteur ${i + 1}/${TOTAL_SECTORS}` });
                 
-                const step2 = await callApi(`?step=2&sector=${sectorIdx}`);
+                const step2 = await callApi(`?step=2&sector=${i}`);
                 if (step2.status === 'error') throw new Error(step2.message);
                 
                 if (step2.equipements) {
-                    totalEquip += step2.equipements;
-                    setStats(prev => ({ ...prev, equipements: totalEquip }));
-                    addLog(`✅ Secteur ${step2.sector || sectorIdx + 1}: ${step2.equipements} équipements`, 'success');
+                    totalStats.equipements += step2.equipements;
+                    setStats({ ...totalStats });
+                    addLog(`✅ Secteur ${step2.sector}: ${step2.equipements} équipements`, 'success');
                 }
-                
-                await new Promise(r => setTimeout(r, 300));
+                await new Promise(r => setTimeout(r, 200));
             }
+            setDoneSteps(prev => [...prev, '2']);
+            setActiveStep(null);
             
             if (shouldStopRef.current) throw new Error('Arrêt demandé');
             
-            // ============================================
-            // STEP 2b: 10 derniers passages (22 secteurs)
-            // ============================================
-            addLog(`🔍 Étape 3/4: Synchronisation des 10 derniers passages (${TOTAL_SECTORS} secteurs)...`, 'info');
+            // Step 2b: Passages
+            setActiveStep('2b');
+            addLog(`📥 Étape 3/5: Passages (${TOTAL_SECTORS} secteurs)...`, 'info');
             
-            for (let sectorIdx = 0; sectorIdx < TOTAL_SECTORS && !shouldStopRef.current; sectorIdx++) {
-                const progressPercent = 35 + (sectorIdx / TOTAL_SECTORS) * 25;
-                setProgress({ percent: Math.round(progressPercent), text: `Étape 3/4 - Passages: Secteur ${sectorIdx + 1}/${TOTAL_SECTORS}` });
+            for (let i = 0; i < TOTAL_SECTORS && !shouldStopRef.current; i++) {
+                const pct = 25 + (i / TOTAL_SECTORS) * 20;
+                setProgress({ percent: Math.round(pct), text: `Étape 3/5 - Passages secteur ${i + 1}/${TOTAL_SECTORS}` });
                 
-                const step2b = await callApi(`?step=2b&sector=${sectorIdx}`);
+                const step2b = await callApi(`?step=2b&sector=${i}`);
                 if (step2b.status === 'error') throw new Error(step2b.message);
                 
                 if (step2b.passages_updated) {
-                    totalPassages += step2b.passages_updated;
-                    setStats(prev => ({ ...prev, passages: totalPassages }));
-                    addLog(`✅ Passages secteur ${step2b.sector || sectorIdx + 1}: ${step2b.passages_updated} mis à jour`, 'success');
+                    totalStats.passages += step2b.passages_updated;
+                    setStats({ ...totalStats });
+                    addLog(`✅ Passages secteur ${step2b.sector}: ${step2b.passages_updated}`, 'success');
                 }
-                
-                await new Promise(r => setTimeout(r, 300));
+                await new Promise(r => setTimeout(r, 200));
             }
+            setDoneSteps(prev => [...prev, '2b']);
+            setActiveStep(null);
             
             if (shouldStopRef.current) throw new Error('Arrêt demandé');
             
-            // ============================================
-            // STEP 3: Pannes (7 périodes)
-            // ============================================
-            addLog(`🔍 Étape 4/4: Synchronisation des pannes (${TOTAL_PERIODS} périodes)...`, 'info');
+            // Step 3: Pannes
+            setActiveStep('3');
+            addLog(`📥 Étape 4/5: Pannes (${TOTAL_PERIODS} périodes)...`, 'info');
             
-            for (let periodIdx = 0; periodIdx < TOTAL_PERIODS && !shouldStopRef.current; periodIdx++) {
-                const progressPercent = 60 + (periodIdx / TOTAL_PERIODS) * 38;
-                setProgress({ percent: Math.round(progressPercent), text: `Étape 4/4 - Pannes: Période ${periodIdx + 1}/${TOTAL_PERIODS}` });
+            for (let i = 0; i < TOTAL_PERIODS && !shouldStopRef.current; i++) {
+                const pct = 45 + (i / TOTAL_PERIODS) * 30;
+                setProgress({ percent: Math.round(pct), text: `Étape 4/5 - Période ${i + 1}/${TOTAL_PERIODS}` });
                 
-                const step3 = await callApi(`?step=3&period=${periodIdx}`);
+                const step3 = await callApi(`?step=3&period=${i}`);
                 if (step3.status === 'error') throw new Error(step3.message);
                 
                 if (step3.pannes) {
-                    totalPannes += step3.pannes;
-                    setStats(prev => ({ ...prev, pannes: totalPannes }));
-                    addLog(`✅ Période ${step3.period || periodIdx + 1}: ${step3.pannes} pannes`, 'success');
+                    totalStats.pannes += step3.pannes;
+                    setStats({ ...totalStats });
+                    addLog(`✅ Période ${step3.period}: ${step3.pannes} pannes`, 'success');
                 }
-                
-                await new Promise(r => setTimeout(r, 300));
+                await new Promise(r => setTimeout(r, 200));
             }
+            setDoneSteps(prev => [...prev, '3']);
+            setActiveStep(null);
             
-            // ============================================
+            if (shouldStopRef.current) throw new Error('Arrêt demandé');
+            
+            // Step 4: Devis
+            setActiveStep('4');
+            addLog(`📥 Étape 5/5: Devis (${TOTAL_DEVIS_PERIODS} périodes)...`, 'info');
+            
+            for (let i = 0; i < TOTAL_DEVIS_PERIODS && !shouldStopRef.current; i++) {
+                const pct = 75 + (i / TOTAL_DEVIS_PERIODS) * 23;
+                setProgress({ percent: Math.round(pct), text: `Étape 5/5 - Devis période ${i + 1}/${TOTAL_DEVIS_PERIODS}` });
+                
+                const step4 = await callApi(`?step=4&period=${i}`);
+                if (step4.status === 'error') throw new Error(step4.message);
+                
+                if (step4.devis) {
+                    totalStats.devis += step4.devis;
+                    setStats({ ...totalStats });
+                    addLog(`✅ Période ${step4.period}: ${step4.devis} devis`, 'success');
+                }
+                await new Promise(r => setTimeout(r, 200));
+            }
+            setDoneSteps(prev => [...prev, '4']);
+            setActiveStep(null);
+            
             // Terminé !
-            // ============================================
             const duration = Math.round((Date.now() - startTime) / 1000);
-            setProgress({ percent: 100, text: 'Terminé !' });
+            setProgress({ percent: 100, text: 'Terminé!' });
             addLog(`🎉 SYNCHRONISATION TERMINÉE en ${duration}s`, 'success');
-            addLog(`📊 Total: ${totalArrets} arrêts, ${totalEquip} équipements, ${totalPassages} passages, ${totalPannes} pannes`, 'success');
+            addLog(`📊 Total: ${totalStats.arrets} arrêts, ${totalStats.equipements} équipements, ${totalStats.passages} passages, ${totalStats.pannes} pannes, ${totalStats.devis} devis`, 'success');
             
-            // Sauvegarder le log
-            const syncLog = {
-                id: Date.now(),
-                sync_date: new Date().toISOString(),
-                status: 'success',
-                equipements_count: totalEquip,
-                pannes_count: totalPannes,
-                arrets_count: totalArrets,
-                passages_count: totalPassages,
-                duration_seconds: duration
-            };
-            const localLogs = JSON.parse(localStorage.getItem('progilift_sync_logs') || '[]');
-            localLogs.unshift(syncLog);
-            localStorage.setItem('progilift_sync_logs', JSON.stringify(localLogs.slice(0, 50)));
-            localStorage.setItem('progilift_last_sync', new Date().toISOString());
-            
+            saveToHistory({ date: new Date().toISOString(), status: 'success', duration, stats: { ...totalStats } });
             showToast(`Synchronisation terminée en ${duration}s`, 'success');
             refresh();
             
@@ -26880,243 +26937,262 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
             addLog(`❌ Erreur: ${e.message}`, 'error');
             setProgress({ percent: 0, text: 'Erreur' });
             showToast('Erreur: ' + e.message, 'error');
-            
-            // Log erreur
-            const localLogs = JSON.parse(localStorage.getItem('progilift_sync_logs') || '[]');
-            localLogs.unshift({
-                id: Date.now(),
-                sync_date: new Date().toISOString(),
-                status: 'error',
-                error_message: e.message,
-                duration_seconds: Math.round((Date.now() - startTime) / 1000)
-            });
-            localStorage.setItem('progilift_sync_logs', JSON.stringify(localLogs.slice(0, 50)));
+            saveToHistory({ date: new Date().toISOString(), status: 'error', error: e.message });
+        }
+        
+        setIsRunning(false);
+        setActiveStep(null);
+    };
+    
+    // Sync rapide (cron)
+    const startCron = async () => {
+        if (isRunning || !apiUrl.trim()) return;
+        
+        setIsRunning(true);
+        addLog('⚡ Démarrage de la sync rapide (cron)...', 'info');
+        setProgress({ percent: 50, text: 'Sync rapide en cours...' });
+        
+        try {
+            const result = await callApi('?mode=cron');
+            if (result.status === 'success') {
+                setStats(prev => ({ ...prev, arrets: result.stats?.arrets || 0, pannes: result.stats?.pannes || 0 }));
+                setProgress({ percent: 100, text: 'Terminé!' });
+                addLog(`✅ Sync rapide terminée en ${result.duration}s`, 'success');
+                addLog(`📊 ${result.stats?.arrets} arrêts, ${result.stats?.pannes} pannes récentes`, 'success');
+                saveToHistory({ date: new Date().toISOString(), status: 'cron', duration: result.duration, stats: result.stats });
+                showToast('Sync rapide terminée', 'success');
+            } else {
+                throw new Error(result.message || 'Erreur inconnue');
+            }
+        } catch (e) {
+            addLog(`❌ Erreur: ${e.message}`, 'error');
+            setProgress({ percent: 0, text: 'Erreur' });
         }
         
         setIsRunning(false);
     };
     
-    // Arrêter la sync
+    // Arrêter
     const stopSync = () => {
         shouldStopRef.current = true;
         setShouldStop(true);
         addLog('⏹️ Arrêt demandé...', 'warning');
     };
     
-    // Sauvegarder l'URL
-    const saveUrl = () => {
-        localStorage.setItem('progilift_api_url', apiUrl);
-        showToast('URL sauvegardée', 'success');
+    // Effacer historique
+    const clearHistory = () => {
+        setHistory([]);
+        localStorage.removeItem('progilift_sync_history');
+        addLog('Historique effacé', 'info');
     };
     
-    // Couleurs des logs
-    const logColors = {
-        info: COLORS.info,
-        success: COLORS.success,
-        error: COLORS.danger,
-        warning: COLORS.warning
-    };
-    
-    // Styles adaptés au thème
+    // Styles
     const cardStyle = {
-        background: COLORS.card,
-        borderRadius: 12,
-        padding: 20,
-        marginBottom: 16,
-        boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-        border: `1px solid ${COLORS.border}`
+        background: COLORS.card, borderRadius: 16, padding: 20, marginBottom: 20,
+        border: `1px solid ${COLORS.border}`, boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
+    };
+    
+    const cardHeaderStyle = {
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16
+    };
+    
+    const cardTitleStyle = {
+        display: 'flex', alignItems: 'center', gap: 10, fontSize: 16, fontWeight: 600, color: COLORS.text
     };
     
     const inputStyle = {
-        flex: 1, padding: '12px 16px',
-        border: `1px solid ${COLORS.border}`,
-        borderRadius: 8, fontSize: 14,
-        background: COLORS.background,
-        color: COLORS.text,
-        outline: 'none'
+        flex: 1, padding: '14px 18px', background: COLORS.background, border: `1px solid ${COLORS.border}`,
+        borderRadius: 10, color: COLORS.text, fontSize: 14, outline: 'none', minWidth: 250
     };
     
-    const btnPrimary = {
-        padding: '12px 24px', background: COLORS.success, color: 'white',
-        border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600,
-        cursor: isRunning ? 'not-allowed' : 'pointer',
-        opacity: isRunning ? 0.6 : 1,
-        display: 'flex', alignItems: 'center', gap: 8,
-        transition: 'all 0.2s'
+    const btnStyle = (bg, disabled = false) => ({
+        padding: '14px 24px', background: bg, color: 'white', border: 'none', borderRadius: 10,
+        fontSize: 14, fontWeight: 600, cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.5 : 1,
+        display: 'flex', alignItems: 'center', gap: 8, transition: 'all 0.2s', whiteSpace: 'nowrap'
+    });
+    
+    const btnOutlineStyle = {
+        padding: '8px 16px', background: 'transparent', border: `1px solid ${COLORS.border}`,
+        borderRadius: 8, color: COLORS.text, fontSize: 12, cursor: 'pointer'
     };
     
-    const btnSecondary = {
-        padding: '12px 24px', background: COLORS.info, color: 'white',
-        border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600,
-        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
-        transition: 'all 0.2s'
-    };
+    // Status badge
+    const statusBadge = isRunning ? 
+        { bg: `${COLORS.info}30`, color: COLORS.info, text: 'En cours...' } :
+        { bg: `${COLORS.success}30`, color: COLORS.success, text: 'Prêt' };
     
-    const btnDanger = {
-        padding: '12px 24px', background: COLORS.danger, color: 'white',
-        border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600,
-        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
-        transition: 'all 0.2s'
-    };
+    // Log colors
+    const logColors = { info: '#58a6ff', success: '#3fb950', error: '#f85149', warning: '#d29922' };
     
-    const statCardStyle = {
-        background: COLORS.card,
-        borderRadius: 12,
-        padding: 16,
-        textAlign: 'center',
-        border: `1px solid ${COLORS.border}`,
-        boxShadow: '0 2px 8px rgba(0,0,0,0.05)'
-    };
+    // Steps
+    const steps = [
+        { id: '1', num: '1', label: 'Arrêts' },
+        { id: '2', num: '2', label: 'Équipements', sub: '22 secteurs' },
+        { id: '2b', num: '3', label: 'Passages', sub: '22 secteurs' },
+        { id: '3', num: '4', label: 'Pannes', sub: '7 périodes' },
+        { id: '4', num: '5', label: 'Devis', sub: '4 périodes' }
+    ];
     
     return h('div', { style: { padding: 0 } },
         
         // Header
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 } },
-            h('div', { style: { 
-                width: 48, height: 48, borderRadius: 12, 
-                background: `linear-gradient(135deg, ${COLORS.info} 0%, ${COLORS.purple} 100%)`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24
-            } }, '🔄'),
-            h('div', null,
-                h('h2', { style: { margin: 0, fontSize: 20, fontWeight: 700, color: COLORS.text } }, 'Progilift Sync'),
-                h('p', { style: { margin: 0, fontSize: 13, color: COLORS.textSecondary } }, 'Synchronisation des données Progilift')
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 16 } },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 16 } },
+                h('div', { style: { width: 56, height: 56, borderRadius: 16, background: `linear-gradient(135deg, ${COLORS.info}, ${COLORS.purple})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28 } }, '🔄'),
+                h('div', null,
+                    h('h2', { style: { margin: 0, fontSize: 24, fontWeight: 700, color: COLORS.text } }, 'Progilift Sync'),
+                    h('p', { style: { margin: 0, fontSize: 14, color: COLORS.textSecondary } }, 'Synchronisation des données ascenseurs')
+                )
+            ),
+            h('div', { style: { padding: '8px 16px', borderRadius: 20, fontSize: 14, fontWeight: 600, background: statusBadge.bg, color: statusBadge.color, display: 'flex', alignItems: 'center', gap: 8 } },
+                h('div', { style: { width: 10, height: 10, borderRadius: '50%', background: statusBadge.color, animation: isRunning ? 'pulse 2s infinite' : 'none' } }),
+                statusBadge.text
             )
         ),
         
-        // Configuration URL
+        // Config
         h('div', { style: cardStyle },
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 } },
-                h('span', { style: { fontSize: 18 } }, '⚙️'),
-                h('span', { style: { fontWeight: 600, color: COLORS.text } }, 'Configuration API')
+            h('div', { style: cardHeaderStyle },
+                h('div', { style: cardTitleStyle }, h('span', null, '⚙️'), 'Configuration API'),
+                h('button', { onClick: checkStatus, style: btnOutlineStyle }, '📊 Vérifier Status')
             ),
-            h('div', { style: { display: 'flex', gap: 12 } },
-                h('input', {
-                    type: 'text',
-                    value: apiUrl,
-                    onChange: e => setApiUrl(e.target.value),
-                    placeholder: 'https://votre-app.vercel.app',
-                    style: inputStyle
-                }),
-                h('button', { onClick: saveUrl, style: { ...btnSecondary, background: COLORS.purple } },
-                    h('span', null, '💾'),
-                    'Sauvegarder'
+            h('div', { style: { display: 'flex', gap: 12, flexWrap: 'wrap' } },
+                h('input', { type: 'text', value: apiUrl, onChange: e => setApiUrl(e.target.value), placeholder: 'URL de l\'API (ex: https://votre-app.vercel.app)', style: inputStyle }),
+                h('button', { onClick: saveConfig, style: btnStyle(COLORS.info) }, h('span', null, '💾'), 'Sauvegarder')
+            )
+        ),
+        
+        // API Info (si connecté)
+        apiInfo && h('div', { style: cardStyle },
+            h('div', { style: cardTitleStyle }, h('span', null, '📡'), 'Informations API'),
+            h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 16, marginTop: 16 } },
+                [['Version', apiInfo.version], ['Secteurs', apiInfo.sectors], ['Périodes Pannes', apiInfo.periods], ['Périodes Devis', apiInfo.devisPeriods], ['Opérations', apiInfo.operations]].map(([label, value], i) =>
+                    h('div', { key: i, style: { background: COLORS.background, padding: 16, borderRadius: 10 } },
+                        h('div', { style: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 4 } }, label),
+                        h('div', { style: { fontSize: 14, fontWeight: 600, color: COLORS.text } }, value)
+                    )
                 )
             )
         ),
         
-        // Boutons d'action
-        h('div', { style: { ...cardStyle, display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' } },
-            h('button', { onClick: startFullSync, disabled: isRunning, style: btnPrimary },
-                h('span', null, '🚀'),
-                'Synchronisation Complète'
-            ),
-            h('button', { onClick: checkStatus, disabled: isRunning, style: btnSecondary },
-                h('span', null, '📊'),
-                'Status'
-            ),
-            isRunning && h('button', { onClick: stopSync, style: btnDanger },
-                h('span', null, '⏹️'),
-                'Arrêter'
+        // Actions
+        h('div', { style: cardStyle },
+            h('div', { style: cardTitleStyle }, h('span', null, '🎮'), 'Actions'),
+            h('div', { style: { display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center', marginTop: 16 } },
+                h('button', { onClick: startFullSync, disabled: isRunning, style: btnStyle(`linear-gradient(135deg, ${COLORS.success}, ${COLORS.teal})`, isRunning) }, h('span', null, '🚀'), 'Sync Complète'),
+                h('button', { onClick: startCron, disabled: isRunning, style: btnStyle(COLORS.info, isRunning) }, h('span', null, '⚡'), 'Sync Rapide (Cron)'),
+                isRunning && h('button', { onClick: stopSync, style: btnStyle(COLORS.danger) }, h('span', null, '⏹️'), 'Arrêter')
             )
         ),
         
-        // Barre de progression
+        // Steps
         h('div', { style: cardStyle },
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 } },
-                h('span', { style: { fontSize: 18 } }, '📈'),
-                h('span', { style: { fontWeight: 600, color: COLORS.text } }, 'Progression')
+            h('div', { style: cardTitleStyle }, h('span', null, '📋'), 'Étapes de synchronisation'),
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginTop: 16, marginBottom: 20 } },
+                steps.map(step => {
+                    const isActive = activeStep === step.id;
+                    const isDone = doneSteps.includes(step.id);
+                    const stepBg = isActive ? `${COLORS.info}20` : isDone ? `${COLORS.success}20` : COLORS.background;
+                    const stepBorder = isActive ? COLORS.info : isDone ? COLORS.success : 'transparent';
+                    const numBg = isActive ? COLORS.info : isDone ? COLORS.success : COLORS.card;
+                    return h('div', { key: step.id, style: { flex: 1, minWidth: 80, textAlign: 'center', padding: 12, background: stepBg, borderRadius: 10, border: `2px solid ${stepBorder}`, transition: 'all 0.3s' } },
+                        h('div', { style: { width: 28, height: 28, borderRadius: '50%', background: numBg, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px', fontWeight: 700, fontSize: 14, color: (isActive || isDone) ? 'white' : COLORS.text } }, step.num),
+                        h('div', { style: { fontSize: 12, color: (isActive || isDone) ? COLORS.text : COLORS.textSecondary } }, step.label),
+                        step.sub && h('small', { style: { fontSize: 10, color: COLORS.textSecondary } }, step.sub)
+                    );
+                })
             ),
-            h('div', { style: { 
-                height: 24, background: COLORS.border, borderRadius: 12, 
-                overflow: 'hidden', marginBottom: 12
-            } },
-                h('div', { style: { 
-                    height: '100%', width: `${progress.percent}%`,
-                    background: `linear-gradient(90deg, ${COLORS.success}, ${COLORS.teal})`,
-                    borderRadius: 12, transition: 'width 0.3s ease',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 12, fontWeight: 700, color: 'white',
-                    minWidth: progress.percent > 0 ? 40 : 0
-                } }, progress.percent > 0 ? `${progress.percent}%` : '')
+            // Progress
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 10, fontSize: 14, color: COLORS.textSecondary } },
+                h('span', null, progress.text),
+                h('span', null, progress.percent + '%')
             ),
-            h('div', { style: { textAlign: 'center', color: COLORS.textSecondary, fontSize: 14 } }, progress.text)
-        ),
-        
-        // Stats Grid - 4 colonnes
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 } },
-            // Arrêts
-            h('div', { style: { ...statCardStyle, borderLeft: `4px solid ${COLORS.danger}` } },
-                h('div', { style: { fontSize: 28, fontWeight: 700, color: COLORS.danger } }, stats.arrets),
-                h('div', { style: { fontSize: 11, color: COLORS.textSecondary, marginTop: 4 } }, 'Arrêts')
-            ),
-            // Équipements
-            h('div', { style: { ...statCardStyle, borderLeft: `4px solid ${COLORS.success}` } },
-                h('div', { style: { fontSize: 28, fontWeight: 700, color: COLORS.success } }, stats.equipements),
-                h('div', { style: { fontSize: 11, color: COLORS.textSecondary, marginTop: 4 } }, 'Équipements')
-            ),
-            // Passages
-            h('div', { style: { ...statCardStyle, borderLeft: `4px solid ${COLORS.info}` } },
-                h('div', { style: { fontSize: 28, fontWeight: 700, color: COLORS.info } }, stats.passages),
-                h('div', { style: { fontSize: 11, color: COLORS.textSecondary, marginTop: 4 } }, 'Passages')
-            ),
-            // Pannes
-            h('div', { style: { ...statCardStyle, borderLeft: `4px solid ${COLORS.warning}` } },
-                h('div', { style: { fontSize: 28, fontWeight: 700, color: COLORS.warning } }, stats.pannes),
-                h('div', { style: { fontSize: 11, color: COLORS.textSecondary, marginTop: 4 } }, 'Pannes')
+            h('div', { style: { height: 24, background: COLORS.background, borderRadius: 12, overflow: 'hidden' } },
+                h('div', { style: { height: '100%', width: `${progress.percent}%`, background: `linear-gradient(90deg, ${COLORS.success}, ${COLORS.teal})`, borderRadius: 12, transition: 'width 0.3s', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: 'white', minWidth: progress.percent > 5 ? 40 : 0 } }, progress.percent > 5 ? progress.percent + '%' : '')
             )
         ),
         
-        // Logs
+        // Stats
         h('div', { style: cardStyle },
-            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 } },
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-                    h('span', { style: { fontSize: 18 } }, '📝'),
-                    h('span', { style: { fontWeight: 600, color: COLORS.text } }, 'Logs')
+            h('div', { style: cardHeaderStyle },
+                h('div', { style: cardTitleStyle }, h('span', null, '📊'), 'Statistiques'),
+                h('span', { style: { fontSize: 12, color: COLORS.textSecondary } }, 'Mis à jour: ' + new Date().toLocaleTimeString())
+            ),
+            h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16 } },
+                [
+                    { key: 'arrets', label: 'Arrêts', color: COLORS.danger },
+                    { key: 'equipements', label: 'Équipements', color: COLORS.success },
+                    { key: 'passages', label: 'Passages', color: COLORS.info },
+                    { key: 'pannes', label: 'Pannes', color: COLORS.warning },
+                    { key: 'devis', label: 'Devis', color: COLORS.purple }
+                ].map(({ key, label, color }) =>
+                    h('div', { key, style: { background: COLORS.background, borderRadius: 12, padding: 20, textAlign: 'center', borderLeft: `4px solid ${color}`, transition: 'transform 0.2s' } },
+                        h('div', { style: { fontSize: 32, fontWeight: 700, color } }, stats[key].toLocaleString()),
+                        h('div', { style: { fontSize: 12, color: COLORS.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 } }, label)
+                    )
+                )
+            )
+        ),
+        
+        // Grid: Logs + History
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: 20 } },
+            // Logs
+            h('div', { style: cardStyle },
+                h('div', { style: cardHeaderStyle },
+                    h('div', { style: cardTitleStyle }, h('span', null, '📝'), 'Logs en temps réel'),
+                    h('button', { onClick: () => setLogs([]), style: btnOutlineStyle }, '🗑️ Effacer')
                 ),
-                h('button', {
-                    onClick: () => setLogs([]),
-                    style: { 
-                        padding: '6px 12px', background: COLORS.background, color: COLORS.textSecondary,
-                        border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 12,
-                        cursor: 'pointer'
-                    }
-                }, 'Effacer')
+                h('div', { ref: logsEndRef, style: { background: '#0d1117', borderRadius: 10, padding: 16, maxHeight: 300, overflowY: 'auto', fontFamily: 'Monaco, Consolas, monospace', fontSize: 13, lineHeight: 1.6 } },
+                    logs.length === 0 ?
+                        h('div', { style: { textAlign: 'center', padding: 40, color: '#6e7681' } }, h('div', { style: { fontSize: 48, marginBottom: 16 } }, '📋'), h('p', null, 'Aucun log pour le moment')) :
+                        logs.map((log, idx) => h('div', { key: idx, style: { marginBottom: 4, display: 'flex', gap: 8 } },
+                            h('span', { style: { color: '#6e7681', flexShrink: 0 } }, `[${log.time}]`),
+                            h('span', { style: { color: logColors[log.type] || '#94a3b8' } }, log.msg)
+                        ))
+                )
             ),
-            h('div', { 
-                ref: logsEndRef,
-                style: { 
-                    background: '#1E293B', borderRadius: 8, padding: 16,
-                    maxHeight: 350, overflowY: 'auto', fontFamily: 'Monaco, Consolas, monospace', fontSize: 12
-                }
-            },
-                logs.length === 0 ? 
-                    h('div', { style: { color: '#64748B', textAlign: 'center', padding: 20 } }, 'Aucun log') :
-                    logs.map((log, idx) => h('div', { 
-                        key: idx, 
-                        style: { 
-                            marginBottom: 6, color: logColors[log.type] || '#94A3B8',
-                            lineHeight: 1.5
-                        }
-                    }, h('span', { style: { color: '#64748B' } }, `[${log.time}] `), log.msg))
+            // History
+            h('div', { style: cardStyle },
+                h('div', { style: cardHeaderStyle },
+                    h('div', { style: cardTitleStyle }, h('span', null, '📅'), 'Historique'),
+                    h('button', { onClick: clearHistory, style: btnOutlineStyle }, '🗑️ Effacer')
+                ),
+                h('div', { style: { maxHeight: 300, overflowY: 'auto' } },
+                    history.length === 0 ?
+                        h('div', { style: { textAlign: 'center', padding: 40, color: COLORS.textSecondary } }, h('div', { style: { fontSize: 48, marginBottom: 16 } }, '📅'), h('p', null, 'Aucun historique')) :
+                        h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+                            h('thead', null,
+                                h('tr', null,
+                                    ['Date', 'Status', 'Durée', 'Détails'].map((th, i) => h('th', { key: i, style: { padding: 12, textAlign: 'left', borderBottom: `1px solid ${COLORS.border}`, color: COLORS.textSecondary, fontSize: 12, textTransform: 'uppercase' } }, th))
+                                )
+                            ),
+                            h('tbody', null,
+                                history.slice(0, 10).map((entry, idx) => {
+                                    const statusColors = { success: COLORS.success, cron: COLORS.info, error: COLORS.danger };
+                                    const statusLabels = { success: 'Succès', cron: 'Cron', error: 'Erreur' };
+                                    const details = entry.stats ? `${entry.stats.arrets || 0} arr, ${entry.stats.equipements || 0} éq, ${entry.stats.pannes || 0} pan` : (entry.error ? entry.error.substring(0, 25) + '...' : '-');
+                                    return h('tr', { key: idx },
+                                        h('td', { style: { padding: 12, fontSize: 13, borderBottom: `1px solid ${COLORS.border}` } }, new Date(entry.date).toLocaleString('fr-FR')),
+                                        h('td', { style: { padding: 12, borderBottom: `1px solid ${COLORS.border}` } },
+                                            h('span', { style: { padding: '4px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, background: `${statusColors[entry.status]}30`, color: statusColors[entry.status] } }, statusLabels[entry.status] || entry.status)
+                                        ),
+                                        h('td', { style: { padding: 12, fontSize: 13, borderBottom: `1px solid ${COLORS.border}` } }, entry.duration ? `${entry.duration}s` : '-'),
+                                        h('td', { style: { padding: 12, fontSize: 13, borderBottom: `1px solid ${COLORS.border}`, color: COLORS.textSecondary } }, details)
+                                    );
+                                })
+                            )
+                        )
+                )
             )
         ),
         
-        // Info footer
-        h('div', { style: { 
-            padding: 16, background: COLORS.infoPastel, borderRadius: 12, 
-            display: 'flex', alignItems: 'flex-start', gap: 12,
-            border: `1px solid ${COLORS.info}30`
-        } },
-            h('span', { style: { fontSize: 18 } }, 'ℹ️'),
-            h('div', { style: { fontSize: 13, color: COLORS.info } },
-                h('strong', null, 'Processus: '),
-                `4 étapes - (1) Arrêts, (2) Équipements (${TOTAL_SECTORS} secteurs), (3) Passages (${TOTAL_SECTORS} secteurs), (4) Pannes (${TOTAL_PERIODS} périodes). `,
-                'Vous pouvez arrêter à tout moment.'
-            )
-        )
+        // Footer
+        h('div', { style: { textAlign: 'center', padding: 20, color: COLORS.textSecondary, fontSize: 12 } }, 'Progilift Sync Dashboard v2.0 • Auvergne Ascenseurs'),
+        
+        // CSS Animation
+        h('style', null, `@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }`)
     );
 };
-
 // Audit Page Inline pour Settings
 const AuditPageInline = ({ data, user, refresh, showToast }) => {
     const [auditLogs, setAuditLogs] = useState([]);
