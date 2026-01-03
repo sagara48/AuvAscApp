@@ -12,6 +12,19 @@ SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
 PROGILIFT_CODE = os.environ.get('PROGILIFT_CODE', 'AUVNB1')
 
+# Liste COMPLETE des 22 secteurs
+SECTORS = ["1", "2", "3", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "17", "18", "19", "20", "71", "72", "73", "74"]
+
+PERIODS = [
+    "2025-10-01T00:00:00",
+    "2025-07-01T00:00:00",
+    "2025-01-01T00:00:00",
+    "2024-01-01T00:00:00",
+    "2023-01-01T00:00:00",
+    "2022-01-01T00:00:00",
+    "2020-01-01T00:00:00"
+]
+
 try:
     ssl_context = ssl.create_default_context()
 except:
@@ -124,9 +137,27 @@ def get_auth():
             return m.group(1)
     return None
 
-def get_sectors(wsid):
-    resp = progilift_call("get_Synchro_Wsect", {"dhDerniereMajFichier": "2000-01-01T00:00:00"}, wsid, 30)
-    return [s.strip() for s in re.findall(r'<SECTEUR>([^<]+)</SECTEUR>', resp or '') if s.strip()]
+# ==== DEBUG ====
+def debug_info():
+    wsid = get_auth()
+    if not wsid:
+        return {"status": "error", "message": "Auth failed"}
+    
+    # Arrêts - données brutes
+    resp_arrets = progilift_call("get_AppareilsArret", {}, wsid, 30)
+    arrets = parse_items(resp_arrets, "tabListeArrets")
+    
+    return {
+        "status": "debug",
+        "wsid": wsid[:10] + "...",
+        "sectors": SECTORS,
+        "sectors_count": len(SECTORS),
+        "arrets": {
+            "count": len(arrets),
+            "sample": arrets[:5] if arrets else [],
+            "xml_sample": resp_arrets[:2000] if resp_arrets else "No response"
+        }
+    }
 
 # ==== STEP 1: Arrêts ====
 def sync_arrets():
@@ -137,9 +168,19 @@ def sync_arrets():
     resp = progilift_call("get_AppareilsArret", {}, wsid, 30)
     arrets = parse_items(resp, "tabListeArrets")
     
+    if not arrets:
+        return {
+            "status": "success",
+            "step": 1,
+            "arrets": 0,
+            "message": "Aucun appareil à l'arrêt actuellement",
+            "next": "?step=2&sector=0"
+        }
+    
     supabase_delete('appareils_arret')
+    inserted = 0
     for a in arrets:
-        supabase_insert('appareils_arret', {
+        result = supabase_insert('appareils_arret', {
             'id_wsoucont': safe_int(a.get('nIDSOUCONT')),
             'id_panne': safe_int(a.get('nClepanne')),
             'date_appel': safe_str(a.get('sDateAppel'), 20),
@@ -148,8 +189,10 @@ def sync_arrets():
             'demandeur': safe_str(a.get('sDemandeur'), 100),
             'updated_at': datetime.now().isoformat()
         })
+        if result:
+            inserted += 1
     
-    return {"status": "success", "step": 1, "arrets": len(arrets), "next": "?step=2&sector=0"}
+    return {"status": "success", "step": 1, "arrets": len(arrets), "inserted": inserted, "next": "?step=2&sector=0"}
 
 # ==== STEP 2: Équipements par secteur ====
 def sync_equipements(sector_idx):
@@ -157,15 +200,14 @@ def sync_equipements(sector_idx):
     if not wsid:
         return {"status": "error", "message": "Auth failed"}
     
-    sectors = get_sectors(wsid)
-    if sector_idx >= len(sectors):
-        return {"status": "success", "step": 2, "message": "All sectors done", "next": "?step=3&period=0"}
+    if sector_idx >= len(SECTORS):
+        return {"status": "success", "step": 2, "message": "All 22 sectors done", "next": "?step=3&period=0"}
     
-    sector = sectors[sector_idx]
+    sector = SECTORS[sector_idx]
     resp = progilift_call("get_Synchro_Wsoucont", {
         "dhDerniereMajFichier": "2000-01-01T00:00:00",
         "sListeSecteursTechnicien": sector
-    }, wsid, 60)
+    }, wsid, 90)
     
     items = parse_items(resp, "tabListeWsoucont")
     equip_list = []
@@ -205,35 +247,24 @@ def sync_equipements(sector_idx):
         supabase_upsert('equipements', equip_list[i:i+30])
     
     next_idx = sector_idx + 1
-    next_url = f"?step=2&sector={next_idx}" if next_idx < len(sectors) else "?step=3&period=0"
+    next_url = f"?step=2&sector={next_idx}" if next_idx < len(SECTORS) else "?step=3&period=0"
     
     return {
         "status": "success",
         "step": 2,
         "sector": sector,
-        "sector_index": f"{sector_idx + 1}/{len(sectors)}",
+        "sector_index": f"{sector_idx + 1}/{len(SECTORS)}",
         "equipements": len(equip_list),
         "next": next_url
     }
 
 # ==== STEP 3: Pannes par période ====
-PERIODS = [
-    "2025-10-01T00:00:00",
-    "2025-07-01T00:00:00",
-    "2025-01-01T00:00:00",
-    "2024-01-01T00:00:00",
-    "2023-01-01T00:00:00",
-    "2022-01-01T00:00:00",
-    "2020-01-01T00:00:00"
-]
-
 def sync_pannes(period_idx):
     wsid = get_auth()
     if not wsid:
         return {"status": "error", "message": "Auth failed"}
     
     if period_idx >= len(PERIODS):
-        # Log final
         supabase_insert('sync_logs', {
             'sync_date': datetime.now().isoformat(),
             'status': 'success'
@@ -241,7 +272,7 @@ def sync_pannes(period_idx):
         return {"status": "success", "step": 3, "message": "SYNC COMPLETE!"}
     
     period = PERIODS[period_idx]
-    resp = progilift_call("get_Synchro_Wpanne", {"dhDerniereMajFichier": period}, wsid, 60)
+    resp = progilift_call("get_Synchro_Wpanne", {"dhDerniereMajFichier": period}, wsid, 90)
     items = parse_items(resp, "tabListeWpanne")
     
     pannes_list = []
@@ -304,35 +335,37 @@ class handler(BaseHTTPRequestHandler):
             step = int(params.get('step', ['0'])[0])
             sector = int(params.get('sector', ['0'])[0])
             period = int(params.get('period', ['0'])[0])
+            debug = params.get('debug', ['0'])[0] == '1'
             
-            if step == 1:
+            if debug:
+                result = debug_info()
+            elif step == 1:
                 result = sync_arrets()
             elif step == 2:
                 result = sync_equipements(sector)
             elif step == 3:
                 result = sync_pannes(period)
             else:
-                # Info
-                wsid = get_auth()
-                sectors = get_sectors(wsid) if wsid else []
                 result = {
                     "status": "ready",
-                    "message": "Sync par étapes",
-                    "sectors_count": len(sectors),
+                    "message": "Sync par étapes - 22 secteurs",
+                    "sectors": SECTORS,
+                    "sectors_count": len(SECTORS),
                     "periods_count": len(PERIODS),
                     "usage": {
+                        "debug": "?debug=1 → Voir données brutes arrêts",
                         "step1": "?step=1 → Arrêts",
-                        "step2": "?step=2&sector=0 → Équipements (répéter pour chaque secteur)",
-                        "step3": "?step=3&period=0 → Pannes (répéter pour chaque période)"
+                        "step2": "?step=2&sector=0 → Équipements (0-21)",
+                        "step3": "?step=3&period=0 → Pannes (0-6)"
                     },
                     "start": "?step=1"
                 }
         except Exception as e:
             result = {"status": "error", "message": str(e), "trace": traceback.format_exc()[:500]}
         
-        body = json.dumps(result).encode()
+        body = json.dumps(result, ensure_ascii=False).encode('utf-8')
         self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
         self.wfile.write(body)
