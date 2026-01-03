@@ -720,6 +720,51 @@ def debug_devis_xml():
         }
     }
 
+def debug_cloud_xml():
+    """Debug: explorer get_Synchro_Cloud pour clients/contrats"""
+    wsid = get_auth_with_retry()
+    if not wsid:
+        return {"status": "error", "message": "Auth failed"}
+    
+    period = "2020-01-01T00:00:00"
+    results = {}
+    
+    # Tester get_Synchro_Cloud
+    try:
+        resp = progilift_call("get_Synchro_Cloud", {"dhDerniereMajFichier": period}, wsid, 120)
+        all_tags = list(set(re.findall(r'<([A-Za-z0-9_]+)>', resp or '')))
+        all_tags.sort()
+        results["get_Synchro_Cloud"] = {
+            "response_length": len(resp) if resp else 0,
+            "response_preview": (resp[:5000] if resp else "EMPTY"),
+            "all_tags_found": all_tags
+        }
+    except Exception as e:
+        results["get_Synchro_Cloud"] = {"error": str(e)}
+    
+    # Tester différentes opérations potentielles pour clients
+    test_operations = [
+        ("get_Synchro_Wcontrat", {"dhDerniereMajFichier": period}),
+        ("get_Synchro_Client", {"dhDerniereMajFichier": period}),
+        ("get_Synchro_Wclient", {"dhDerniereMajFichier": period}),
+        ("get_ListeClients", {}),
+        ("get_ListeContrats", {}),
+    ]
+    
+    for op_name, params in test_operations:
+        try:
+            resp = progilift_call(op_name, params, wsid, 30)
+            all_tags = list(set(re.findall(r'<([A-Za-z0-9_]+)>', resp or '')))
+            results[op_name] = {
+                "response_length": len(resp) if resp else 0,
+                "response_preview": (resp[:2000] if resp else "EMPTY"),
+                "all_tags_found": all_tags
+            }
+        except Exception as e:
+            results[op_name] = {"error": str(e)}
+    
+    return {"status": "debug", "results": results}
+
 # ============================================================================
 # ENDPOINTS OPTIONNELS (pour extensions futures)
 # ============================================================================
@@ -935,6 +980,8 @@ class handler(BaseHTTPRequestHandler):
                 result = sync_devis(period)
             elif step == 'debug_devis':
                 result = debug_devis_xml()
+            elif step == 'debug_cloud':
+                result = debug_cloud_xml()
             # Endpoints optionnels
             elif step == 'missions':
                 result = sync_missions(period)
