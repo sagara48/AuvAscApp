@@ -515,7 +515,7 @@ def sync_equipements(sector_idx):
     }, wsid, 90)
     
     passages_items = parse_items(resp2, "tabListeWsoucont2")
-    passages_updated = 0
+    passages_count = len(passages_items)
     
     for e in passages_items:
         id_ws = safe_int(e.get('IDWSOUCONT'))
@@ -525,8 +525,7 @@ def sync_equipements(sector_idx):
                 update_data[f'lib{i}'] = safe_str(e.get(f'LIB{i}'), 100)
                 update_data[f'datepass{i}'] = safe_int(e.get(f'DATEPASS{i}'))
             
-            if supabase_update('equipements', 'id_wsoucont', id_ws, update_data):
-                passages_updated += 1
+            supabase_update('equipements', 'id_wsoucont', id_ws, update_data)
     
     next_idx = sector_idx + 1
     next_url = f"?step=2&sector={next_idx}" if next_idx < len(SECTORS) else "?step=3&period=0"
@@ -537,7 +536,7 @@ def sync_equipements(sector_idx):
         "sector": sector,
         "sector_index": f"{sector_idx + 1}/{len(SECTORS)}",
         "equipements": len(equip_list),
-        "passages": passages_updated,
+        "passages": passages_count,
         "next": next_url
     }
 
@@ -684,6 +683,41 @@ def sync_devis(period_idx):
         supabase_insert('sync_logs', {'sync_date': datetime.now().isoformat(), 'status': 'success'})
     
     return result
+
+def debug_devis_xml():
+    """Debug: voir la réponse XML brute de get_Synchro_Devis"""
+    wsid = get_auth_with_retry()
+    if not wsid:
+        return {"status": "error", "message": "Auth failed"}
+    
+    # Tester avec une période récente
+    period = "2024-01-01T00:00:00"
+    resp = progilift_call("get_Synchro_Devis", {"dhDerniereMajFichier": period}, wsid, 90)
+    
+    # Chercher tous les tags XML dans la réponse
+    all_tags = list(set(re.findall(r'<([A-Za-z0-9_]+)>', resp or '')))
+    all_tags.sort()
+    
+    # Tester aussi get_Synchro_SuiviDemandesDevis
+    resp2 = progilift_call("get_Synchro_SuiviDemandesDevis", {"dhDerniereMajFichier": period}, wsid, 90)
+    all_tags2 = list(set(re.findall(r'<([A-Za-z0-9_]+)>', resp2 or '')))
+    all_tags2.sort()
+    
+    return {
+        "status": "debug",
+        "get_Synchro_Devis": {
+            "period": period,
+            "response_length": len(resp) if resp else 0,
+            "response_preview": (resp[:3000] if resp else "EMPTY") + "..." if resp and len(resp) > 3000 else resp,
+            "all_tags_found": all_tags
+        },
+        "get_Synchro_SuiviDemandesDevis": {
+            "period": period,
+            "response_length": len(resp2) if resp2 else 0,
+            "response_preview": (resp2[:3000] if resp2 else "EMPTY") + "..." if resp2 and len(resp2) > 3000 else resp2,
+            "all_tags_found": all_tags2
+        }
+    }
 
 # ============================================================================
 # ENDPOINTS OPTIONNELS (pour extensions futures)
@@ -898,6 +932,8 @@ class handler(BaseHTTPRequestHandler):
                 result = sync_pannes(period)
             elif step == '4':
                 result = sync_devis(period)
+            elif step == 'debug_devis':
+                result = debug_devis_xml()
             # Endpoints optionnels
             elif step == 'missions':
                 result = sync_missions(period)
