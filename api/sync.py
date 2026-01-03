@@ -105,6 +105,7 @@ import os
 import json
 import re
 import ssl
+import time
 import traceback
 import urllib.request
 from datetime import datetime
@@ -274,6 +275,13 @@ def supabase_update(table, id_field, id_value, data):
 # PROGILIFT SOAP CLIENT
 # ============================================================================
 
+# Cache global pour le WSID (évite de recréer une session à chaque appel)
+_wsid_cache = {
+    'wsid': None,
+    'created_at': None,
+    'max_age': 300  # 5 minutes max
+}
+
 def progilift_call(method, params, wsid=None, timeout=30):
     """
     Appelle une méthode SOAP ProgiLift
@@ -339,19 +347,58 @@ def parse_items(xml, tag):
             items.append(item)
     return items
 
-def get_auth():
+def get_auth(force_refresh=False):
     """
-    Authentification ProgiLift
+    Authentification ProgiLift avec cache et retry
+    
+    Args:
+        force_refresh: Force une nouvelle authentification
     
     Returns:
         str: WSID (session ID) ou None si échec
     """
-    resp = progilift_call("IdentificationTechnicien", {"sSteCodeWeb": PROGILIFT_CODE}, None, 30)
-    if resp:
-        m = re.search(r'WSID[^>]*>([A-F0-9]+)<', resp, re.IGNORECASE)
-        if m:
-            return m.group(1)
+    global _wsid_cache
+    
+    # Vérifier le cache (sauf si force_refresh)
+    if not force_refresh and _wsid_cache['wsid'] and _wsid_cache['created_at']:
+        age = (datetime.now() - _wsid_cache['created_at']).total_seconds()
+        if age < _wsid_cache['max_age']:
+            return _wsid_cache['wsid']
+    
+    # Retry jusqu'à 3 fois
+    for attempt in range(3):
+        try:
+            resp = progilift_call("IdentificationTechnicien", {"sSteCodeWeb": PROGILIFT_CODE}, None, 30)
+            if resp:
+                m = re.search(r'WSID[^>]*>([A-F0-9]+)<', resp, re.IGNORECASE)
+                if m:
+                    wsid = m.group(1)
+                    # Mettre en cache
+                    _wsid_cache['wsid'] = wsid
+                    _wsid_cache['created_at'] = datetime.now()
+                    return wsid
+        except Exception as e:
+            pass
+        
+        # Attendre avant retry (1s, 2s, 3s)
+        if attempt < 2:
+            import time
+            time.sleep(attempt + 1)
+    
+    # Échec après 3 tentatives - invalider le cache
+    _wsid_cache['wsid'] = None
+    _wsid_cache['created_at'] = None
     return None
+
+def get_auth_with_retry():
+    """
+    Obtient un WSID avec retry et rafraîchissement automatique
+    """
+    wsid = get_auth()
+    if not wsid:
+        # Forcer un refresh si le premier essai échoue
+        wsid = get_auth(force_refresh=True)
+    return wsid
 
 # ============================================================================
 # STEP 1: ARRÊTS (Appareils actuellement à l'arrêt)
@@ -359,7 +406,7 @@ def get_auth():
 
 def sync_arrets():
     """Synchronise les appareils actuellement à l'arrêt"""
-    wsid = get_auth()
+    wsid = get_auth_with_retry()
     if not wsid:
         return {"status": "error", "message": "Auth failed"}
     
@@ -396,7 +443,7 @@ def sync_arrets():
 
 def sync_equipements(sector_idx):
     """Synchronise les équipements d'un secteur"""
-    wsid = get_auth()
+    wsid = get_auth_with_retry()
     if not wsid:
         return {"status": "error", "message": "Auth failed"}
     
@@ -482,7 +529,7 @@ def sync_equipements(sector_idx):
 
 def sync_passages(sector_idx):
     """Synchronise les 10 derniers passages d'un secteur"""
-    wsid = get_auth()
+    wsid = get_auth_with_retry()
     if not wsid:
         return {"status": "error", "message": "Auth failed"}
     
@@ -528,16 +575,34 @@ def sync_passages(sector_idx):
 # ============================================================================
 
 def sync_pannes(period_idx):
-    """Synchronise les pannes d'une période"""
-    wsid = get_auth()
+    """Synchronise les pannes d'une période avec retry"""
+    # Force refresh du WSID pour les pannes (requêtes longues)
+    wsid = get_auth(force_refresh=True)
     if not wsid:
-        return {"status": "error", "message": "Auth failed"}
+        # Retry après pause
+        time.sleep(5)
+        wsid = get_auth(force_refresh=True)
+    if not wsid:
+        return {"status": "error", "message": "Auth failed after retry"}
     
     if period_idx >= len(PERIODS):
         return {"status": "success", "step": 3, "message": "All pannes done", "next": "?step=4&period=0"}
     
     period = PERIODS[period_idx]
-    resp = progilift_call("get_Synchro_Wpanne", {"dhDerniereMajFichier": period}, wsid, 90)
+    
+    # Timeout augmenté à 180s pour les grosses requêtes de pannes
+    resp = progilift_call("get_Synchro_Wpanne", {"dhDerniereMajFichier": period}, wsid, 180)
+    
+    # Si échec, retry avec nouvelle auth
+    if not resp:
+        time.sleep(3)
+        wsid = get_auth(force_refresh=True)
+        if wsid:
+            resp = progilift_call("get_Synchro_Wpanne", {"dhDerniereMajFichier": period}, wsid, 180)
+    
+    if not resp:
+        return {"status": "error", "message": f"Failed to fetch pannes for period {period}"}
+    
     items = parse_items(resp, "tabListeWpanne")
     
     pannes_list = []
@@ -584,7 +649,7 @@ def sync_pannes(period_idx):
 
 def sync_devis(period_idx):
     """Synchronise les devis d'une période"""
-    wsid = get_auth()
+    wsid = get_auth_with_retry()
     if not wsid:
         return {"status": "error", "message": "Auth failed"}
     
@@ -650,7 +715,7 @@ def sync_devis(period_idx):
 
 def sync_missions(period_idx):
     """Synchronise l'historique des missions (optionnel)"""
-    wsid = get_auth()
+    wsid = get_auth_with_retry()
     if not wsid:
         return {"status": "error", "message": "Auth failed"}
     
@@ -693,7 +758,7 @@ def sync_missions(period_idx):
 
 def sync_controles(period_idx):
     """Synchronise les contrôles réglementaires (optionnel)"""
-    wsid = get_auth()
+    wsid = get_auth_with_retry()
     if not wsid:
         return {"status": "error", "message": "Auth failed"}
     
@@ -735,7 +800,7 @@ def sync_controles(period_idx):
 
 def get_equipement_detail(id_wsoucont):
     """Récupère les détails complets d'un équipement"""
-    wsid = get_auth()
+    wsid = get_auth_with_retry()
     if not wsid:
         return {"status": "error", "message": "Auth failed"}
     
@@ -755,7 +820,7 @@ def sync_cron():
     start = datetime.now()
     stats = {"arrets": 0, "pannes": 0}
     
-    wsid = get_auth()
+    wsid = get_auth_with_retry()
     if not wsid:
         return {"status": "error", "message": "Auth failed"}
     
