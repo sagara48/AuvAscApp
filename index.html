@@ -26704,6 +26704,14 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
     const [stats, setStats] = useState({ arrets: 0, equipements: 0, pannes: 0 });
     const [logs, setLogs] = useState([{ time: new Date().toLocaleTimeString(), msg: 'Prêt à synchroniser...', type: 'info' }]);
     const shouldStopRef = useRef(false);
+    const logsEndRef = useRef(null);
+    
+    // Auto-scroll logs
+    useEffect(() => {
+        if (logsEndRef.current) {
+            logsEndRef.current.scrollTop = logsEndRef.current.scrollHeight;
+        }
+    }, [logs]);
     
     // Fonction pour ajouter un log
     const addLog = (msg, type = 'info') => {
@@ -26732,14 +26740,14 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
             addLog('Vérification du status...', 'info');
             const data = await callApi('');
             addLog(`Status: ${data.status} - ${data.sectors_count || 0} secteurs, ${data.periods_count || 0} périodes`, 'success');
-            showToast('Status vérifié avec succès', 'success');
+            showToast('Connexion API vérifiée avec succès', 'success');
         } catch (e) {
             addLog(`Erreur: ${e.message}`, 'error');
-            showToast('Erreur: ' + e.message, 'error');
+            showToast('Erreur de connexion: ' + e.message, 'error');
         }
     };
     
-    // Synchronisation complète
+    // Synchronisation complète en 3 étapes
     const startFullSync = async () => {
         if (isRunning) return;
         
@@ -26753,6 +26761,7 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
         let totalPannes = 0;
         let totalArrets = 0;
         const startTime = Date.now();
+        const totalSectors = 22;
         
         try {
             // STEP 1: Arrêts
@@ -26768,13 +26777,14 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
             
             if (shouldStopRef.current) throw new Error('Arrêt demandé');
             
-            // STEP 2: Équipements
-            addLog('🔍 Étape 2: Synchronisation des équipements...', 'info');
+            // STEP 2: Équipements (22 secteurs)
+            addLog(`🔍 Étape 2: Synchronisation des équipements (${totalSectors} secteurs)...`, 'info');
             let sectorIdx = 0;
             let hasMoreSectors = true;
             
             while (hasMoreSectors && !shouldStopRef.current) {
-                setProgress({ percent: 10 + (sectorIdx * 3), text: `Étape 2/3 - Secteur ${sectorIdx + 1}` });
+                const progressPercent = 10 + Math.round((sectorIdx / totalSectors) * 50);
+                setProgress({ percent: progressPercent, text: `Étape 2/3 - Secteur ${sectorIdx + 1}/${totalSectors}` });
                 
                 const step2 = await callApi(`?step=2&sector=${sectorIdx}`);
                 if (step2.status === 'error') throw new Error(step2.message);
@@ -26791,7 +26801,6 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
                     hasMoreSectors = false;
                 }
                 
-                // Petite pause pour ne pas surcharger
                 await new Promise(r => setTimeout(r, 500));
             }
             
@@ -26836,6 +26845,7 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
                 status: 'success',
                 equipements_count: totalEquip,
                 pannes_count: totalPannes,
+                arrets_count: totalArrets,
                 duration_seconds: duration
             };
             const localLogs = JSON.parse(localStorage.getItem('progilift_sync_logs') || '[]');
@@ -26881,119 +26891,202 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
     
     // Couleurs des logs
     const logColors = {
-        info: '#2196F3',
-        success: '#4CAF50',
-        error: '#f44336',
-        warning: '#ff9800'
+        info: COLORS.info,
+        success: COLORS.success,
+        error: COLORS.danger,
+        warning: COLORS.warning
     };
     
-    return h('div', { style: { 
-        background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)', 
-        margin: -24, padding: 24, minHeight: '100%', borderRadius: 12, color: 'white'
-    } },
+    // Styles adaptés au thème
+    const cardStyle = {
+        background: COLORS.card,
+        borderRadius: 12,
+        padding: 20,
+        marginBottom: 16,
+        boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+        border: `1px solid ${COLORS.border}`
+    };
+    
+    const inputStyle = {
+        flex: 1, padding: '12px 16px',
+        border: `1px solid ${COLORS.border}`,
+        borderRadius: 8, fontSize: 14,
+        background: COLORS.background,
+        color: COLORS.text,
+        outline: 'none'
+    };
+    
+    const btnPrimary = {
+        padding: '12px 24px', background: COLORS.success, color: 'white',
+        border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600,
+        cursor: isRunning ? 'not-allowed' : 'pointer',
+        opacity: isRunning ? 0.6 : 1,
+        display: 'flex', alignItems: 'center', gap: 8,
+        transition: 'all 0.2s'
+    };
+    
+    const btnSecondary = {
+        padding: '12px 24px', background: COLORS.info, color: 'white',
+        border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600,
+        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
+        transition: 'all 0.2s'
+    };
+    
+    const btnDanger = {
+        padding: '12px 24px', background: COLORS.danger, color: 'white',
+        border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600,
+        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
+        transition: 'all 0.2s'
+    };
+    
+    const statCardStyle = {
+        background: COLORS.card,
+        borderRadius: 12,
+        padding: 20,
+        textAlign: 'center',
+        border: `1px solid ${COLORS.border}`,
+        boxShadow: '0 2px 8px rgba(0,0,0,0.05)'
+    };
+    
+    return h('div', { style: { padding: 0 } },
         
         // Header
-        h('h2', { style: { textAlign: 'center', marginBottom: 24, fontSize: 24 } }, '🔄 Progilift Sync'),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 } },
+            h('div', { style: { 
+                width: 48, height: 48, borderRadius: 12, 
+                background: `linear-gradient(135deg, ${COLORS.info} 0%, ${COLORS.purple} 100%)`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24
+            } }, '🔄'),
+            h('div', null,
+                h('h2', { style: { margin: 0, fontSize: 20, fontWeight: 700, color: COLORS.text } }, 'Progilift Sync'),
+                h('p', { style: { margin: 0, fontSize: 13, color: COLORS.textSecondary } }, 'Synchronisation des données Progilift')
+            )
+        ),
         
-        // Configuration
-        h('div', { style: { background: 'rgba(255,255,255,0.1)', borderRadius: 12, padding: 20, marginBottom: 20 } },
-            h('label', { style: { display: 'block', marginBottom: 8, fontSize: 14, opacity: 0.8 } }, 'URL de l\'API Vercel'),
+        // Configuration URL
+        h('div', { style: cardStyle },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 } },
+                h('span', { style: { fontSize: 18 } }, '⚙️'),
+                h('span', { style: { fontWeight: 600, color: COLORS.text } }, 'Configuration API')
+            ),
             h('div', { style: { display: 'flex', gap: 12 } },
                 h('input', {
                     type: 'text',
                     value: apiUrl,
                     onChange: e => setApiUrl(e.target.value),
                     placeholder: 'https://votre-app.vercel.app',
-                    style: { 
-                        flex: 1, padding: 12, border: 'none', borderRadius: 8,
-                        background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: 14
-                    }
+                    style: inputStyle
                 }),
-                h('button', {
-                    onClick: saveUrl,
-                    style: { 
-                        padding: '12px 20px', background: '#2196F3', color: 'white',
-                        border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600
-                    }
-                }, '💾 Sauver')
+                h('button', { onClick: saveUrl, style: { ...btnSecondary, background: COLORS.purple } },
+                    h('span', null, '💾'),
+                    'Sauvegarder'
+                )
             )
         ),
         
-        // Boutons
-        h('div', { style: { textAlign: 'center', marginBottom: 20 } },
-            h('button', {
-                onClick: startFullSync,
-                disabled: isRunning,
-                style: { 
-                    padding: '15px 30px', background: isRunning ? '#666' : '#4CAF50', color: 'white',
-                    border: 'none', borderRadius: 8, fontSize: 16, fontWeight: 600,
-                    cursor: isRunning ? 'not-allowed' : 'pointer', margin: 5,
-                    transition: 'all 0.3s'
-                }
-            }, '🚀 Lancer la Synchronisation Complète'),
-            
-            h('button', {
-                onClick: checkStatus,
-                disabled: isRunning,
-                style: { 
-                    padding: '15px 30px', background: '#2196F3', color: 'white',
-                    border: 'none', borderRadius: 8, fontSize: 16, fontWeight: 600,
-                    cursor: 'pointer', margin: 5, transition: 'all 0.3s'
-                }
-            }, '📊 Vérifier Status'),
-            
-            isRunning && h('button', {
-                onClick: stopSync,
-                style: { 
-                    padding: '15px 30px', background: '#f44336', color: 'white',
-                    border: 'none', borderRadius: 8, fontSize: 16, fontWeight: 600,
-                    cursor: 'pointer', margin: 5, transition: 'all 0.3s'
-                }
-            }, '⏹️ Arrêter')
+        // Boutons d'action
+        h('div', { style: { ...cardStyle, display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' } },
+            h('button', { onClick: startFullSync, disabled: isRunning, style: btnPrimary },
+                h('span', null, '🚀'),
+                'Lancer la Synchronisation Complète'
+            ),
+            h('button', { onClick: checkStatus, disabled: isRunning, style: btnSecondary },
+                h('span', null, '📊'),
+                'Vérifier Status'
+            ),
+            isRunning && h('button', { onClick: stopSync, style: btnDanger },
+                h('span', null, '⏹️'),
+                'Arrêter'
+            )
         ),
         
-        // Progression
-        h('div', { style: { background: 'rgba(255,255,255,0.1)', borderRadius: 12, padding: 20, marginBottom: 20 } },
-            h('div', { style: { fontSize: 18, marginBottom: 15 } }, '📈 Progression'),
-            h('div', { style: { height: 20, background: 'rgba(255,255,255,0.2)', borderRadius: 10, overflow: 'hidden', marginBottom: 15 } },
+        // Barre de progression
+        h('div', { style: cardStyle },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 } },
+                h('span', { style: { fontSize: 18 } }, '📈'),
+                h('span', { style: { fontWeight: 600, color: COLORS.text } }, 'Progression')
+            ),
+            h('div', { style: { 
+                height: 24, background: COLORS.border, borderRadius: 12, 
+                overflow: 'hidden', marginBottom: 12
+            } },
                 h('div', { style: { 
                     height: '100%', width: `${progress.percent}%`,
-                    background: 'linear-gradient(90deg, #4CAF50, #8BC34A)',
-                    borderRadius: 10, transition: 'width 0.3s',
+                    background: `linear-gradient(90deg, ${COLORS.success}, ${COLORS.teal})`,
+                    borderRadius: 12, transition: 'width 0.3s ease',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 12, fontWeight: 'bold'
-                } }, `${progress.percent}%`)
+                    fontSize: 12, fontWeight: 700, color: 'white',
+                    minWidth: progress.percent > 0 ? 40 : 0
+                } }, progress.percent > 0 ? `${progress.percent}%` : '')
             ),
-            h('div', { style: { textAlign: 'center', opacity: 0.8 } }, progress.text)
+            h('div', { style: { textAlign: 'center', color: COLORS.textSecondary, fontSize: 14 } }, progress.text)
         ),
         
-        // Stats
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 15, marginBottom: 20 } },
-            h('div', { style: { background: 'rgba(255,255,255,0.1)', borderRadius: 8, padding: 15, textAlign: 'center' } },
-                h('div', { style: { fontSize: '2em', fontWeight: 'bold', color: '#f44336' } }, stats.arrets),
-                h('div', { style: { fontSize: 12, opacity: 0.7, marginTop: 5 } }, 'Appareils arrêtés')
+        // Stats Grid
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 16 } },
+            // Arrêts
+            h('div', { style: { ...statCardStyle, borderLeft: `4px solid ${COLORS.danger}` } },
+                h('div', { style: { fontSize: 32, fontWeight: 700, color: COLORS.danger } }, stats.arrets),
+                h('div', { style: { fontSize: 13, color: COLORS.textSecondary, marginTop: 4 } }, 'Appareils arrêtés')
             ),
-            h('div', { style: { background: 'rgba(255,255,255,0.1)', borderRadius: 8, padding: 15, textAlign: 'center' } },
-                h('div', { style: { fontSize: '2em', fontWeight: 'bold', color: '#4CAF50' } }, stats.equipements),
-                h('div', { style: { fontSize: 12, opacity: 0.7, marginTop: 5 } }, 'Équipements')
+            // Équipements
+            h('div', { style: { ...statCardStyle, borderLeft: `4px solid ${COLORS.success}` } },
+                h('div', { style: { fontSize: 32, fontWeight: 700, color: COLORS.success } }, stats.equipements),
+                h('div', { style: { fontSize: 13, color: COLORS.textSecondary, marginTop: 4 } }, 'Équipements')
             ),
-            h('div', { style: { background: 'rgba(255,255,255,0.1)', borderRadius: 8, padding: 15, textAlign: 'center' } },
-                h('div', { style: { fontSize: '2em', fontWeight: 'bold', color: '#ff9800' } }, stats.pannes),
-                h('div', { style: { fontSize: 12, opacity: 0.7, marginTop: 5 } }, 'Pannes')
+            // Pannes
+            h('div', { style: { ...statCardStyle, borderLeft: `4px solid ${COLORS.warning}` } },
+                h('div', { style: { fontSize: 32, fontWeight: 700, color: COLORS.warning } }, stats.pannes),
+                h('div', { style: { fontSize: 13, color: COLORS.textSecondary, marginTop: 4 } }, 'Pannes')
             )
         ),
         
         // Logs
-        h('div', { style: { background: 'rgba(255,255,255,0.1)', borderRadius: 12, padding: 20 } },
-            h('div', { style: { fontSize: 18, marginBottom: 15 } }, '📝 Logs'),
-            h('div', { style: { 
-                background: '#000', borderRadius: 8, padding: 15,
-                maxHeight: 300, overflowY: 'auto', fontFamily: 'monospace', fontSize: 13
-            } },
-                logs.map((log, idx) => h('div', { 
-                    key: idx, 
-                    style: { marginBottom: 5, color: logColors[log.type] || '#fff' }
-                }, `[${log.time}] ${log.msg}`))
+        h('div', { style: cardStyle },
+            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 } },
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                    h('span', { style: { fontSize: 18 } }, '📝'),
+                    h('span', { style: { fontWeight: 600, color: COLORS.text } }, 'Logs de synchronisation')
+                ),
+                h('button', {
+                    onClick: () => setLogs([]),
+                    style: { 
+                        padding: '6px 12px', background: COLORS.background, color: COLORS.textSecondary,
+                        border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 12,
+                        cursor: 'pointer'
+                    }
+                }, 'Effacer')
+            ),
+            h('div', { 
+                ref: logsEndRef,
+                style: { 
+                    background: '#1E293B', borderRadius: 8, padding: 16,
+                    maxHeight: 280, overflowY: 'auto', fontFamily: 'Monaco, Consolas, monospace', fontSize: 12
+                }
+            },
+                logs.length === 0 ? 
+                    h('div', { style: { color: '#64748B', textAlign: 'center', padding: 20 } }, 'Aucun log') :
+                    logs.map((log, idx) => h('div', { 
+                        key: idx, 
+                        style: { 
+                            marginBottom: 6, color: logColors[log.type] || '#94A3B8',
+                            lineHeight: 1.5
+                        }
+                    }, h('span', { style: { color: '#64748B' } }, `[${log.time}] `), log.msg))
+            )
+        ),
+        
+        // Info footer
+        h('div', { style: { 
+            padding: 16, background: COLORS.infoPastel, borderRadius: 12, 
+            display: 'flex', alignItems: 'flex-start', gap: 12,
+            border: `1px solid ${COLORS.info}30`
+        } },
+            h('span', { style: { fontSize: 18 } }, 'ℹ️'),
+            h('div', { style: { fontSize: 13, color: COLORS.info } },
+                h('strong', null, 'Processus de synchronisation: '),
+                'La synchronisation se fait en 3 étapes - (1) Appareils à l\'arrêt, (2) Équipements par secteur (22 secteurs), (3) Pannes par période. ',
+                'Vous pouvez arrêter à tout moment.'
             )
         )
     );
