@@ -130,15 +130,10 @@ SECTORS = [
     "13", "14", "15", "17", "18", "19", "20", "71", "72", "73", "74"
 ]
 
-# Périodes pour les pannes (du plus récent au plus ancien)
+# Périodes pour les pannes (seulement 2 périodes pour éviter les timeouts)
 PERIODS = [
     "2025-10-01T00:00:00",
-    "2025-07-01T00:00:00",
-    "2025-01-01T00:00:00",
-    "2024-01-01T00:00:00",
-    "2023-01-01T00:00:00",
-    "2022-01-01T00:00:00",
-    "2020-01-01T00:00:00"
+    "2025-07-01T00:00:00"
 ]
 
 # Périodes pour les devis
@@ -438,19 +433,21 @@ def sync_arrets():
     }
 
 # ============================================================================
-# STEP 2: ÉQUIPEMENTS (Wsoucont par secteur)
+# STEP 2: ÉQUIPEMENTS + PASSAGES (Wsoucont + Wsoucont2 par secteur)
 # ============================================================================
 
 def sync_equipements(sector_idx):
-    """Synchronise les équipements d'un secteur"""
+    """Synchronise les équipements ET les passages d'un secteur en une seule étape"""
     wsid = get_auth_with_retry()
     if not wsid:
         return {"status": "error", "message": "Auth failed"}
     
     if sector_idx >= len(SECTORS):
-        return {"status": "success", "step": 2, "message": "All 22 sectors done", "next": "?step=2b&sector=0"}
+        return {"status": "success", "step": 2, "message": "All 22 sectors done", "next": "?step=3&period=0"}
     
     sector = SECTORS[sector_idx]
+    
+    # ===== PARTIE 1: Récupérer les équipements (Wsoucont) =====
     resp = progilift_call("get_Synchro_Wsoucont", {
         "dhDerniereMajFichier": "2000-01-01T00:00:00",
         "sListeSecteursTechnicien": sector
@@ -507,12 +504,32 @@ def sync_equipements(sector_idx):
                 'updated_at': datetime.now().isoformat()
             })
     
-    # Upsert par batches de 30
+    # Upsert équipements par batches de 30
     for i in range(0, len(equip_list), 30):
         supabase_upsert('equipements', equip_list[i:i+30])
     
+    # ===== PARTIE 2: Récupérer les passages (Wsoucont2) =====
+    resp2 = progilift_call("get_Synchro_Wsoucont2", {
+        "dhDerniereMajFichier": "2000-01-01T00:00:00",
+        "sListeSecteursTechnicien": sector
+    }, wsid, 90)
+    
+    passages_items = parse_items(resp2, "tabListeWsoucont2")
+    passages_updated = 0
+    
+    for e in passages_items:
+        id_ws = safe_int(e.get('IDWSOUCONT'))
+        if id_ws:
+            update_data = {'updated_at': datetime.now().isoformat()}
+            for i in range(1, 11):
+                update_data[f'lib{i}'] = safe_str(e.get(f'LIB{i}'), 100)
+                update_data[f'datepass{i}'] = safe_int(e.get(f'DATEPASS{i}'))
+            
+            if supabase_update('equipements', 'id_wsoucont', id_ws, update_data):
+                passages_updated += 1
+    
     next_idx = sector_idx + 1
-    next_url = f"?step=2&sector={next_idx}" if next_idx < len(SECTORS) else "?step=2b&sector=0"
+    next_url = f"?step=2&sector={next_idx}" if next_idx < len(SECTORS) else "?step=3&period=0"
     
     return {
         "status": "success",
@@ -520,55 +537,14 @@ def sync_equipements(sector_idx):
         "sector": sector,
         "sector_index": f"{sector_idx + 1}/{len(SECTORS)}",
         "equipements": len(equip_list),
+        "passages": passages_updated,
         "next": next_url
     }
 
-# ============================================================================
-# STEP 2b: 10 DERNIERS PASSAGES (Wsoucont2)
-# ============================================================================
-
+# Fonction de compatibilité (redirige vers sync_equipements)
 def sync_passages(sector_idx):
-    """Synchronise les 10 derniers passages d'un secteur"""
-    wsid = get_auth_with_retry()
-    if not wsid:
-        return {"status": "error", "message": "Auth failed"}
-    
-    if sector_idx >= len(SECTORS):
-        return {"status": "success", "step": "2b", "message": "All passages done", "next": "?step=3&period=0"}
-    
-    sector = SECTORS[sector_idx]
-    resp = progilift_call("get_Synchro_Wsoucont2", {
-        "dhDerniereMajFichier": "2000-01-01T00:00:00",
-        "sListeSecteursTechnicien": sector
-    }, wsid, 90)
-    
-    items = parse_items(resp, "tabListeWsoucont2")
-    updated = 0
-    
-    for e in items:
-        id_ws = safe_int(e.get('IDWSOUCONT'))
-        if id_ws:
-            update_data = {'updated_at': datetime.now().isoformat()}
-            # LIB1-LIB10: Libellés des 10 derniers passages
-            # DATEPASS1-DATEPASS10: Dates des passages (format numérique)
-            for i in range(1, 11):
-                update_data[f'lib{i}'] = safe_str(e.get(f'LIB{i}'), 100)
-                update_data[f'datepass{i}'] = safe_int(e.get(f'DATEPASS{i}'))
-            
-            if supabase_update('equipements', 'id_wsoucont', id_ws, update_data):
-                updated += 1
-    
-    next_idx = sector_idx + 1
-    next_url = f"?step=2b&sector={next_idx}" if next_idx < len(SECTORS) else "?step=3&period=0"
-    
-    return {
-        "status": "success",
-        "step": "2b",
-        "sector": sector,
-        "sector_index": f"{sector_idx + 1}/{len(SECTORS)}",
-        "passages_updated": updated,
-        "next": next_url
-    }
+    """Deprecated: Les passages sont maintenant inclus dans sync_equipements"""
+    return {"status": "success", "step": "2b", "message": "Passages now included in step 2", "next": "?step=3&period=0"}
 
 # ============================================================================
 # STEP 3: PANNES (Wpanne par période)
@@ -946,15 +922,15 @@ class handler(BaseHTTPRequestHandler):
                         "status": "GET / → Cette documentation",
                         "cron": "GET ?mode=cron → Sync rapide (arrêts + pannes récentes)",
                         "step1": "GET ?step=1 → Arrêts",
-                        "step2": "GET ?step=2&sector=0 → Équipements (0-21)",
-                        "step2b": "GET ?step=2b&sector=0 → 10 derniers passages (0-21)",
-                        "step3": "GET ?step=3&period=0 → Pannes (0-6)",
+                        "step2": "GET ?step=2&sector=0 → Équipements + Passages (0-21)",
+                        "step3": "GET ?step=3&period=0 → Pannes (0-1)",
                         "step4": "GET ?step=4&period=0 → Devis (0-3)",
                         "missions": "GET ?step=missions&period=0 → Historique missions (optionnel)",
                         "controles": "GET ?step=controles&period=0 → Contrôles (optionnel)",
                         "detail": "GET ?step=detail&id=1234 → Détail équipement (optionnel)"
                     },
-                    "full_sync_sequence": "?step=1 → ?step=2&sector=0..21 → ?step=2b&sector=0..21 → ?step=3&period=0..6 → ?step=4&period=0..3",
+                    "full_sync_sequence": "?step=1 → ?step=2&sector=0..21 → ?step=3&period=0..1 → ?step=4&period=0..3",
+                    "note": "4 étapes: (1) Arrêts, (2) Équipements+Passages (22 secteurs), (3) Pannes (2 périodes), (4) Devis (4 périodes)",
                     "progilift_info": {
                         "ws_url": WS_URL,
                         "available_operations": [
