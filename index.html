@@ -26701,10 +26701,13 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
     const [isRunning, setIsRunning] = useState(false);
     const [shouldStop, setShouldStop] = useState(false);
     const [progress, setProgress] = useState({ percent: 0, text: 'En attente...' });
-    const [stats, setStats] = useState({ arrets: 0, equipements: 0, pannes: 0 });
+    const [stats, setStats] = useState({ arrets: 0, equipements: 0, passages: 0, pannes: 0 });
     const [logs, setLogs] = useState([{ time: new Date().toLocaleTimeString(), msg: 'Prêt à synchroniser...', type: 'info' }]);
     const shouldStopRef = useRef(false);
     const logsEndRef = useRef(null);
+    
+    const TOTAL_SECTORS = 22;
+    const TOTAL_PERIODS = 7;
     
     // Auto-scroll logs
     useEffect(() => {
@@ -26747,26 +26750,28 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
         }
     };
     
-    // Synchronisation complète en 3 étapes
+    // Synchronisation complète en 4 étapes
     const startFullSync = async () => {
         if (isRunning) return;
         
         setIsRunning(true);
         shouldStopRef.current = false;
         setShouldStop(false);
-        setStats({ arrets: 0, equipements: 0, pannes: 0 });
+        setStats({ arrets: 0, equipements: 0, passages: 0, pannes: 0 });
         setLogs([]);
         
         let totalEquip = 0;
         let totalPannes = 0;
         let totalArrets = 0;
+        let totalPassages = 0;
         const startTime = Date.now();
-        const totalSectors = 22;
         
         try {
+            // ============================================
             // STEP 1: Arrêts
-            addLog('🔍 Étape 1: Synchronisation des appareils à l\'arrêt...', 'info');
-            setProgress({ percent: 5, text: 'Étape 1/3 - Arrêts' });
+            // ============================================
+            addLog('🔍 Étape 1/4: Synchronisation des appareils à l\'arrêt...', 'info');
+            setProgress({ percent: 2, text: 'Étape 1/4 - Arrêts' });
             
             const step1 = await callApi('?step=1');
             if (step1.status === 'error') throw new Error(step1.message);
@@ -26777,14 +26782,14 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
             
             if (shouldStopRef.current) throw new Error('Arrêt demandé');
             
+            // ============================================
             // STEP 2: Équipements (22 secteurs)
-            addLog(`🔍 Étape 2: Synchronisation des équipements (${totalSectors} secteurs)...`, 'info');
-            let sectorIdx = 0;
-            let hasMoreSectors = true;
+            // ============================================
+            addLog(`🔍 Étape 2/4: Synchronisation des équipements (${TOTAL_SECTORS} secteurs)...`, 'info');
             
-            while (hasMoreSectors && !shouldStopRef.current) {
-                const progressPercent = 10 + Math.round((sectorIdx / totalSectors) * 50);
-                setProgress({ percent: progressPercent, text: `Étape 2/3 - Secteur ${sectorIdx + 1}/${totalSectors}` });
+            for (let sectorIdx = 0; sectorIdx < TOTAL_SECTORS && !shouldStopRef.current; sectorIdx++) {
+                const progressPercent = 5 + (sectorIdx / TOTAL_SECTORS) * 30;
+                setProgress({ percent: Math.round(progressPercent), text: `Étape 2/4 - Équipements: Secteur ${sectorIdx + 1}/${TOTAL_SECTORS}` });
                 
                 const step2 = await callApi(`?step=2&sector=${sectorIdx}`);
                 if (step2.status === 'error') throw new Error(step2.message);
@@ -26795,24 +26800,42 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
                     addLog(`✅ Secteur ${step2.sector || sectorIdx + 1}: ${step2.equipements} équipements`, 'success');
                 }
                 
-                if (step2.next && step2.next.includes('step=2')) {
-                    sectorIdx++;
-                } else {
-                    hasMoreSectors = false;
-                }
-                
-                await new Promise(r => setTimeout(r, 500));
+                await new Promise(r => setTimeout(r, 300));
             }
             
             if (shouldStopRef.current) throw new Error('Arrêt demandé');
             
-            // STEP 3: Pannes
-            addLog('🔍 Étape 3: Synchronisation des pannes...', 'info');
-            let periodIdx = 0;
-            let hasMorePeriods = true;
+            // ============================================
+            // STEP 2b: 10 derniers passages (22 secteurs)
+            // ============================================
+            addLog(`🔍 Étape 3/4: Synchronisation des 10 derniers passages (${TOTAL_SECTORS} secteurs)...`, 'info');
             
-            while (hasMorePeriods && !shouldStopRef.current) {
-                setProgress({ percent: 60 + (periodIdx * 5), text: `Étape 3/3 - Période ${periodIdx + 1}` });
+            for (let sectorIdx = 0; sectorIdx < TOTAL_SECTORS && !shouldStopRef.current; sectorIdx++) {
+                const progressPercent = 35 + (sectorIdx / TOTAL_SECTORS) * 25;
+                setProgress({ percent: Math.round(progressPercent), text: `Étape 3/4 - Passages: Secteur ${sectorIdx + 1}/${TOTAL_SECTORS}` });
+                
+                const step2b = await callApi(`?step=2b&sector=${sectorIdx}`);
+                if (step2b.status === 'error') throw new Error(step2b.message);
+                
+                if (step2b.passages_updated) {
+                    totalPassages += step2b.passages_updated;
+                    setStats(prev => ({ ...prev, passages: totalPassages }));
+                    addLog(`✅ Passages secteur ${step2b.sector || sectorIdx + 1}: ${step2b.passages_updated} mis à jour`, 'success');
+                }
+                
+                await new Promise(r => setTimeout(r, 300));
+            }
+            
+            if (shouldStopRef.current) throw new Error('Arrêt demandé');
+            
+            // ============================================
+            // STEP 3: Pannes (7 périodes)
+            // ============================================
+            addLog(`🔍 Étape 4/4: Synchronisation des pannes (${TOTAL_PERIODS} périodes)...`, 'info');
+            
+            for (let periodIdx = 0; periodIdx < TOTAL_PERIODS && !shouldStopRef.current; periodIdx++) {
+                const progressPercent = 60 + (periodIdx / TOTAL_PERIODS) * 38;
+                setProgress({ percent: Math.round(progressPercent), text: `Étape 4/4 - Pannes: Période ${periodIdx + 1}/${TOTAL_PERIODS}` });
                 
                 const step3 = await callApi(`?step=3&period=${periodIdx}`);
                 if (step3.status === 'error') throw new Error(step3.message);
@@ -26823,20 +26846,16 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
                     addLog(`✅ Période ${step3.period || periodIdx + 1}: ${step3.pannes} pannes`, 'success');
                 }
                 
-                if (step3.next && step3.next.includes('step=3')) {
-                    periodIdx++;
-                } else {
-                    hasMorePeriods = false;
-                }
-                
-                await new Promise(r => setTimeout(r, 500));
+                await new Promise(r => setTimeout(r, 300));
             }
             
+            // ============================================
             // Terminé !
+            // ============================================
             const duration = Math.round((Date.now() - startTime) / 1000);
             setProgress({ percent: 100, text: 'Terminé !' });
             addLog(`🎉 SYNCHRONISATION TERMINÉE en ${duration}s`, 'success');
-            addLog(`📊 Total: ${totalArrets} arrêts, ${totalEquip} équipements, ${totalPannes} pannes`, 'success');
+            addLog(`📊 Total: ${totalArrets} arrêts, ${totalEquip} équipements, ${totalPassages} passages, ${totalPannes} pannes`, 'success');
             
             // Sauvegarder le log
             const syncLog = {
@@ -26846,6 +26865,7 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
                 equipements_count: totalEquip,
                 pannes_count: totalPannes,
                 arrets_count: totalArrets,
+                passages_count: totalPassages,
                 duration_seconds: duration
             };
             const localLogs = JSON.parse(localStorage.getItem('progilift_sync_logs') || '[]');
@@ -26853,7 +26873,7 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
             localStorage.setItem('progilift_sync_logs', JSON.stringify(localLogs.slice(0, 50)));
             localStorage.setItem('progilift_last_sync', new Date().toISOString());
             
-            showToast(`Synchronisation terminée: ${totalEquip} équipements, ${totalPannes} pannes`, 'success');
+            showToast(`Synchronisation terminée en ${duration}s`, 'success');
             refresh();
             
         } catch (e) {
@@ -26942,7 +26962,7 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
     const statCardStyle = {
         background: COLORS.card,
         borderRadius: 12,
-        padding: 20,
+        padding: 16,
         textAlign: 'center',
         border: `1px solid ${COLORS.border}`,
         boxShadow: '0 2px 8px rgba(0,0,0,0.05)'
@@ -26988,11 +27008,11 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
         h('div', { style: { ...cardStyle, display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' } },
             h('button', { onClick: startFullSync, disabled: isRunning, style: btnPrimary },
                 h('span', null, '🚀'),
-                'Lancer la Synchronisation Complète'
+                'Synchronisation Complète'
             ),
             h('button', { onClick: checkStatus, disabled: isRunning, style: btnSecondary },
                 h('span', null, '📊'),
-                'Vérifier Status'
+                'Status'
             ),
             isRunning && h('button', { onClick: stopSync, style: btnDanger },
                 h('span', null, '⏹️'),
@@ -27022,22 +27042,27 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
             h('div', { style: { textAlign: 'center', color: COLORS.textSecondary, fontSize: 14 } }, progress.text)
         ),
         
-        // Stats Grid
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 16 } },
+        // Stats Grid - 4 colonnes
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 } },
             // Arrêts
             h('div', { style: { ...statCardStyle, borderLeft: `4px solid ${COLORS.danger}` } },
-                h('div', { style: { fontSize: 32, fontWeight: 700, color: COLORS.danger } }, stats.arrets),
-                h('div', { style: { fontSize: 13, color: COLORS.textSecondary, marginTop: 4 } }, 'Appareils arrêtés')
+                h('div', { style: { fontSize: 28, fontWeight: 700, color: COLORS.danger } }, stats.arrets),
+                h('div', { style: { fontSize: 11, color: COLORS.textSecondary, marginTop: 4 } }, 'Arrêts')
             ),
             // Équipements
             h('div', { style: { ...statCardStyle, borderLeft: `4px solid ${COLORS.success}` } },
-                h('div', { style: { fontSize: 32, fontWeight: 700, color: COLORS.success } }, stats.equipements),
-                h('div', { style: { fontSize: 13, color: COLORS.textSecondary, marginTop: 4 } }, 'Équipements')
+                h('div', { style: { fontSize: 28, fontWeight: 700, color: COLORS.success } }, stats.equipements),
+                h('div', { style: { fontSize: 11, color: COLORS.textSecondary, marginTop: 4 } }, 'Équipements')
+            ),
+            // Passages
+            h('div', { style: { ...statCardStyle, borderLeft: `4px solid ${COLORS.info}` } },
+                h('div', { style: { fontSize: 28, fontWeight: 700, color: COLORS.info } }, stats.passages),
+                h('div', { style: { fontSize: 11, color: COLORS.textSecondary, marginTop: 4 } }, 'Passages')
             ),
             // Pannes
             h('div', { style: { ...statCardStyle, borderLeft: `4px solid ${COLORS.warning}` } },
-                h('div', { style: { fontSize: 32, fontWeight: 700, color: COLORS.warning } }, stats.pannes),
-                h('div', { style: { fontSize: 13, color: COLORS.textSecondary, marginTop: 4 } }, 'Pannes')
+                h('div', { style: { fontSize: 28, fontWeight: 700, color: COLORS.warning } }, stats.pannes),
+                h('div', { style: { fontSize: 11, color: COLORS.textSecondary, marginTop: 4 } }, 'Pannes')
             )
         ),
         
@@ -27046,7 +27071,7 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
             h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 } },
                 h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
                     h('span', { style: { fontSize: 18 } }, '📝'),
-                    h('span', { style: { fontWeight: 600, color: COLORS.text } }, 'Logs de synchronisation')
+                    h('span', { style: { fontWeight: 600, color: COLORS.text } }, 'Logs')
                 ),
                 h('button', {
                     onClick: () => setLogs([]),
@@ -27061,7 +27086,7 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
                 ref: logsEndRef,
                 style: { 
                     background: '#1E293B', borderRadius: 8, padding: 16,
-                    maxHeight: 280, overflowY: 'auto', fontFamily: 'Monaco, Consolas, monospace', fontSize: 12
+                    maxHeight: 350, overflowY: 'auto', fontFamily: 'Monaco, Consolas, monospace', fontSize: 12
                 }
             },
                 logs.length === 0 ? 
@@ -27084,8 +27109,8 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
         } },
             h('span', { style: { fontSize: 18 } }, 'ℹ️'),
             h('div', { style: { fontSize: 13, color: COLORS.info } },
-                h('strong', null, 'Processus de synchronisation: '),
-                'La synchronisation se fait en 3 étapes - (1) Appareils à l\'arrêt, (2) Équipements par secteur (22 secteurs), (3) Pannes par période. ',
+                h('strong', null, 'Processus: '),
+                `4 étapes - (1) Arrêts, (2) Équipements (${TOTAL_SECTORS} secteurs), (3) Passages (${TOTAL_SECTORS} secteurs), (4) Pannes (${TOTAL_PERIODS} périodes). `,
                 'Vous pouvez arrêter à tout moment.'
             )
         )
