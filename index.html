@@ -26711,8 +26711,8 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
     const logsEndRef = useRef(null);
     
     const TOTAL_SECTORS = 22;
-    const TOTAL_PERIODS = 7;
-    const TOTAL_DEVIS_PERIODS = 4;
+    const TOTAL_PERIODS = 2;        // Pannes: 2 périodes
+    const TOTAL_DEVIS_PERIODS = 4;  // Devis: 4 périodes
     
     // Charger l'historique au démarrage
     useEffect(() => {
@@ -26773,7 +26773,7 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
                 setApiInfo({
                     version: data.version || 'N/A',
                     sectors: data.config?.sectors_count || 22,
-                    periods: data.config?.periods_count || 7,
+                    periods: data.config?.periods_count || 2,
                     devisPeriods: data.config?.devis_periods_count || 4,
                     operations: data.progilift_info?.available_operations?.length || 0
                 });
@@ -26798,7 +26798,7 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
         localStorage.setItem('progilift_sync_history', JSON.stringify(newHistory));
     };
     
-    // Synchronisation complète
+    // Synchronisation complète - 4 ÉTAPES
     const startFullSync = async () => {
         if (isRunning || !apiUrl.trim()) {
             if (!apiUrl.trim()) addLog('Veuillez configurer l\'URL API', 'error');
@@ -26817,10 +26817,10 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
         addLog('🚀 Démarrage de la synchronisation complète...', 'info');
         
         try {
-            // Step 1: Arrêts
+            // ============ ÉTAPE 1: ARRÊTS ============
             setActiveStep('1');
-            setProgress({ percent: 2, text: 'Étape 1/5 - Arrêts' });
-            addLog('📥 Étape 1/5: Récupération des arrêts...', 'info');
+            setProgress({ percent: 2, text: 'Étape 1/4 - Arrêts' });
+            addLog('📥 Étape 1/4: Récupération des arrêts...', 'info');
             
             const step1 = await callApi('?step=1');
             if (step1.status === 'error') throw new Error(step1.message);
@@ -26833,59 +26833,36 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
             
             if (shouldStopRef.current) throw new Error('Arrêt demandé');
             
-            // Step 2: Équipements
+            // ============ ÉTAPE 2: ÉQUIPEMENTS + PASSAGES (fusionnés) ============
             setActiveStep('2');
-            addLog(`📥 Étape 2/5: Équipements (${TOTAL_SECTORS} secteurs)...`, 'info');
+            addLog(`📥 Étape 2/4: Équipements + Passages (${TOTAL_SECTORS} secteurs)...`, 'info');
             
             for (let i = 0; i < TOTAL_SECTORS && !shouldStopRef.current; i++) {
-                const pct = 5 + (i / TOTAL_SECTORS) * 20;
-                setProgress({ percent: Math.round(pct), text: `Étape 2/5 - Secteur ${i + 1}/${TOTAL_SECTORS}` });
+                const pct = 5 + (i / TOTAL_SECTORS) * 40;
+                setProgress({ percent: Math.round(pct), text: `Étape 2/4 - Secteur ${i + 1}/${TOTAL_SECTORS}` });
                 
                 const step2 = await callApi(`?step=2&sector=${i}`);
                 if (step2.status === 'error') throw new Error(step2.message);
                 
-                if (step2.equipements) {
-                    totalStats.equipements += step2.equipements;
-                    setStats({ ...totalStats });
-                    addLog(`✅ Secteur ${step2.sector}: ${step2.equipements} équipements`, 'success');
-                }
-                await new Promise(r => setTimeout(r, 3000)); // Délai augmenté pour pannes
+                if (step2.equipements) totalStats.equipements += step2.equipements;
+                if (step2.passages) totalStats.passages += step2.passages;
+                setStats({ ...totalStats });
+                addLog(`✅ Secteur ${step2.sector}: ${step2.equipements || 0} équip, ${step2.passages || 0} passages`, 'success');
+                
+                await new Promise(r => setTimeout(r, 500));
             }
             setDoneSteps(prev => [...prev, '2']);
             setActiveStep(null);
             
             if (shouldStopRef.current) throw new Error('Arrêt demandé');
             
-            // Step 2b: Passages
-            setActiveStep('2b');
-            addLog(`📥 Étape 3/5: Passages (${TOTAL_SECTORS} secteurs)...`, 'info');
-            
-            for (let i = 0; i < TOTAL_SECTORS && !shouldStopRef.current; i++) {
-                const pct = 25 + (i / TOTAL_SECTORS) * 20;
-                setProgress({ percent: Math.round(pct), text: `Étape 3/5 - Passages secteur ${i + 1}/${TOTAL_SECTORS}` });
-                
-                const step2b = await callApi(`?step=2b&sector=${i}`);
-                if (step2b.status === 'error') throw new Error(step2b.message);
-                
-                if (step2b.passages_updated) {
-                    totalStats.passages += step2b.passages_updated;
-                    setStats({ ...totalStats });
-                    addLog(`✅ Passages secteur ${step2b.sector}: ${step2b.passages_updated}`, 'success');
-                }
-                await new Promise(r => setTimeout(r, 3000)); // Délai augmenté pour pannes
-            }
-            setDoneSteps(prev => [...prev, '2b']);
-            setActiveStep(null);
-            
-            if (shouldStopRef.current) throw new Error('Arrêt demandé');
-            
-            // Step 3: Pannes
+            // ============ ÉTAPE 3: PANNES (2 périodes) ============
             setActiveStep('3');
-            addLog(`📥 Étape 4/5: Pannes (${TOTAL_PERIODS} périodes)...`, 'info');
+            addLog(`📥 Étape 3/4: Pannes (${TOTAL_PERIODS} périodes)...`, 'info');
             
             for (let i = 0; i < TOTAL_PERIODS && !shouldStopRef.current; i++) {
                 const pct = 45 + (i / TOTAL_PERIODS) * 30;
-                setProgress({ percent: Math.round(pct), text: `Étape 4/5 - Période ${i + 1}/${TOTAL_PERIODS}` });
+                setProgress({ percent: Math.round(pct), text: `Étape 3/4 - Période ${i + 1}/${TOTAL_PERIODS}` });
                 
                 const step3 = await callApi(`?step=3&period=${i}`);
                 if (step3.status === 'error') throw new Error(step3.message);
@@ -26895,20 +26872,21 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
                     setStats({ ...totalStats });
                     addLog(`✅ Période ${step3.period}: ${step3.pannes} pannes`, 'success');
                 }
-                await new Promise(r => setTimeout(r, 3000)); // Délai augmenté pour pannes
+                
+                await new Promise(r => setTimeout(r, 3000));
             }
             setDoneSteps(prev => [...prev, '3']);
             setActiveStep(null);
             
             if (shouldStopRef.current) throw new Error('Arrêt demandé');
             
-            // Step 4: Devis
+            // ============ ÉTAPE 4: DEVIS (4 périodes) ============
             setActiveStep('4');
-            addLog(`📥 Étape 5/5: Devis (${TOTAL_DEVIS_PERIODS} périodes)...`, 'info');
+            addLog(`📥 Étape 4/4: Devis (${TOTAL_DEVIS_PERIODS} périodes)...`, 'info');
             
             for (let i = 0; i < TOTAL_DEVIS_PERIODS && !shouldStopRef.current; i++) {
                 const pct = 75 + (i / TOTAL_DEVIS_PERIODS) * 23;
-                setProgress({ percent: Math.round(pct), text: `Étape 5/5 - Devis période ${i + 1}/${TOTAL_DEVIS_PERIODS}` });
+                setProgress({ percent: Math.round(pct), text: `Étape 4/4 - Devis période ${i + 1}/${TOTAL_DEVIS_PERIODS}` });
                 
                 const step4 = await callApi(`?step=4&period=${i}`);
                 if (step4.status === 'error') throw new Error(step4.message);
@@ -26918,7 +26896,8 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
                     setStats({ ...totalStats });
                     addLog(`✅ Période ${step4.period}: ${step4.devis} devis`, 'success');
                 }
-                await new Promise(r => setTimeout(r, 3000)); // Délai augmenté pour pannes
+                
+                await new Promise(r => setTimeout(r, 500));
             }
             setDoneSteps(prev => [...prev, '4']);
             setActiveStep(null);
@@ -27024,13 +27003,12 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
     // Log colors
     const logColors = { info: '#58a6ff', success: '#3fb950', error: '#f85149', warning: '#d29922' };
     
-    // Steps
+    // 4 Étapes (équipements + passages fusionnés)
     const steps = [
         { id: '1', num: '1', label: 'Arrêts' },
-        { id: '2', num: '2', label: 'Équipements', sub: '22 secteurs' },
-        { id: '2b', num: '3', label: 'Passages', sub: '22 secteurs' },
-        { id: '3', num: '4', label: 'Pannes', sub: '7 périodes' },
-        { id: '4', num: '5', label: 'Devis', sub: '4 périodes' }
+        { id: '2', num: '2', label: 'Équipements', sub: '+ Passages (22 sect.)' },
+        { id: '3', num: '3', label: 'Pannes', sub: '2 périodes' },
+        { id: '4', num: '4', label: 'Devis', sub: '4 périodes' }
     ];
     
     return h('div', { style: { padding: 0 } },
@@ -27085,20 +27063,20 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
             )
         ),
         
-        // Steps
+        // Steps (4 étapes)
         h('div', { style: cardStyle },
             h('div', { style: cardTitleStyle }, h('span', null, '📋'), 'Étapes de synchronisation'),
-            h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginTop: 16, marginBottom: 20 } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginTop: 16, marginBottom: 20 } },
                 steps.map(step => {
                     const isActive = activeStep === step.id;
                     const isDone = doneSteps.includes(step.id);
                     const stepBg = isActive ? `${COLORS.info}20` : isDone ? `${COLORS.success}20` : COLORS.background;
                     const stepBorder = isActive ? COLORS.info : isDone ? COLORS.success : 'transparent';
                     const numBg = isActive ? COLORS.info : isDone ? COLORS.success : COLORS.card;
-                    return h('div', { key: step.id, style: { flex: 1, minWidth: 80, textAlign: 'center', padding: 12, background: stepBg, borderRadius: 10, border: `2px solid ${stepBorder}`, transition: 'all 0.3s' } },
-                        h('div', { style: { width: 28, height: 28, borderRadius: '50%', background: numBg, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px', fontWeight: 700, fontSize: 14, color: (isActive || isDone) ? 'white' : COLORS.text } }, step.num),
-                        h('div', { style: { fontSize: 12, color: (isActive || isDone) ? COLORS.text : COLORS.textSecondary } }, step.label),
-                        step.sub && h('small', { style: { fontSize: 10, color: COLORS.textSecondary } }, step.sub)
+                    return h('div', { key: step.id, style: { flex: 1, minWidth: 120, textAlign: 'center', padding: 16, background: stepBg, borderRadius: 12, border: `2px solid ${stepBorder}`, transition: 'all 0.3s' } },
+                        h('div', { style: { width: 32, height: 32, borderRadius: '50%', background: numBg, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px', fontWeight: 700, fontSize: 16, color: (isActive || isDone) ? 'white' : COLORS.text } }, step.num),
+                        h('div', { style: { fontSize: 14, fontWeight: 600, color: (isActive || isDone) ? COLORS.text : COLORS.textSecondary, marginBottom: 4 } }, step.label),
+                        step.sub && h('small', { style: { fontSize: 11, color: COLORS.textSecondary } }, step.sub)
                     );
                 })
             ),
