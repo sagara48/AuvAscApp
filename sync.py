@@ -1,173 +1,58 @@
 """
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                     PROGILIFT SYNC API v2.0 - Vercel                         ║
-╠══════════════════════════════════════════════════════════════════════════════╣
-║  Synchronisation des données ProgiLift vers Supabase                         ║
-║  API serverless pour Vercel avec support SOAP vers REST                       ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-
-ENDPOINTS PROGILIFT DISPONIBLES (découverts par reverse-engineering):
-=====================================================================
-
-AUTHENTIFICATION:
-  - IdentificationTechnicien          → Authentification, retourne WSID
-
-ÉQUIPEMENTS (Wsoucont):
-  - get_Synchro_Wsoucont              → Liste des équipements par secteur
-  - get_Synchro_Wsoucont2             → 10 derniers passages par équipement
-  - get_WSoucontCS_IDWSOUCONT         → Détails d'un équipement par ID
-  - get_InfosSoucontPourUnCBLu        → Infos équipement par code-barres
-
-PANNES:
-  - get_AppareilsArret                → Appareils actuellement à l'arrêt
-  - get_Synchro_Wpanne                → Historique des pannes
-  - get_Synchro_Wpanop2               → Détails opérations pannes
-  - get_Synchro_Wpanop2WP             → Détails opérations pannes (v2)
-  - get_Synchro_Retourne              → Retours/rappels pannes
-  - get_Synchro_MotifsRendusPannes    → Référentiel motifs de rendu
-
-DEVIS:
-  - get_Synchro_Devis                 → Liste des devis
-  - get_Synchro_SuiviDemandesDevis    → Suivi des demandes de devis
-
-MISSIONS / INTERVENTIONS:
-  - get_Synchro_Histo_Mission         → Historique des missions
-  - get_Encours_NonSynchronises_PourUnTech → Missions en cours non sync
-  - get_Superviseur_Etat_Interventions_ParTech → État interventions
-
-CONTRÔLES / ÉTATS:
-  - get_Synchro_Wcontrol              → Contrôles réglementaires
-  - get_Synchro_EtatDesAppareils      → États des appareils
-  - get_Synchro_Etat_Appareil         → État d'un appareil
-  - get_Synchro_Motifs_Etat_Appareil  → Référentiel motifs état
-
-STOCK:
-  - get_Synchro_WsorstockWP           → Sorties de stock
-
-CLOUD / DIVERS:
-  - get_Synchro_Cloud                 → Données cloud
-  - get_Synchro_MO                    → Main d'œuvre
-  - get_Synchro_EDSRubrique           → Rubriques EDS
-  - get_Synchro_EDSType               → Types EDS
-  - get_Synchro_TagNFC                → Tags NFC
-  - get_Droits                        → Droits utilisateur
-  - get_RDV_PourUnTechnicien_AjdEtDemain → RDV aujourd'hui/demain
-
-STRUCTURE DES DONNÉES:
-======================
-
-Wsoucont (Équipements):
-  - IDWSOUCONT (PK), IDWCONTRAT, SECTEUR, ASCENSEUR
-  - DES2 (adresse), DES3 (ville), DES4-DES7
-  - DIV1-DIV15 (champs personnalisables)
-  - NUMAPPCLI, JAN-DEC (planning mensuel)
-
-Wsoucont2 (10 derniers passages):
-  - IDWSOUCONT, LIB1-LIB10, DATEPASS1-DATEPASS10
-
-Wpanne (Pannes):
-  - P0CLEUNIK (PK), IDWSOUCONT, DATE, JOUR
-  - DEPANNEUR, PANNES (libellé), INTER, HRFININTER
-  - DUREE, ENSEMBLE, LOCAL_, CAUSE, MOTIF, NOTE2
-
-Devis:
-  - IDDEVIS (PK), IDWSOUCONT, NUMERO, DATE
-  - OBJET, MONTANTHT, MONTANTTTC, TVA
-  - STATUT, DATESTATUT, CLIENT, ADRESSE, COMMENTAIRE
-
-Histo_Mission:
-  - IDMISSION (PK), IDWSOUCONT, DATE, TYPE
-  - TECHNICIEN, DUREE, OBSERVATIONS
-
-Wcontrol (Contrôles):
-  - IDCONTROL (PK), IDWSOUCONT, DATE_CONTROLE
-  - TYPE_CONTROLE, RESULTAT, OBSERVATIONS
-
-WsorstockWP (Stock):
-  - IDSORSTOCK (PK), IDWSOUCONT, DATE
-  - ARTICLE, QUANTITE, PRIX
-
-PARAMÈTRES API:
-===============
-  - dhDerniereMajFichier : Date ISO pour sync incrémentale
-  - sListeSecteursTechnicien : Secteur(s) à synchroniser
-  - nIDWSoucont : ID équipement spécifique
-  - nIdTechnicien : ID technicien
-  - sCBLu : Code-barres lu
-
-URL SOAP:
-=========
-  https://ws.progilift.fr/WS_PROGILIFT_20230419_WEB/awws/WS_Progilift_20230419.awws
-  Namespace: urn:WS_Progilift
+Progilift Sync API - Synchronisation complète vers Supabase
+===========================================================
+Endpoints:
+  ?step=0           → Types planning (table référence nb_visites)
+  ?step=1           → Arrêts en cours
+  ?step=2&sector=X  → Équipements Wsoucont (0-21)
+  ?step=2b&sector=X → Wsoucont2: passages, DAT, TXT (0-21)
+  ?step=3&period=X  → Pannes (0-6)
+  ?step=4           → Mise à jour nb_visites_an
+  ?mode=cron        → Sync rapide (arrêts + pannes récentes)
 """
 
 import os
 import json
 import re
 import ssl
-import time
 import traceback
 import urllib.request
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
-
+# Configuration
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
 PROGILIFT_CODE = os.environ.get('PROGILIFT_CODE', 'AUVNB1')
-
-# URL du WebService SOAP ProgiLift
 WS_URL = "https://ws.progilift.fr/WS_PROGILIFT_20230419_WEB/awws/WS_Progilift_20230419.awws"
-WS_NAMESPACE = "urn:WS_Progilift"
 
-# Liste COMPLETE des 22 secteurs Auvergne Ascenseurs
-SECTORS = [
-    "1", "2", "3", "5", "6", "7", "8", "9", "10", "11", "12", 
-    "13", "14", "15", "17", "18", "19", "20", "71", "72", "73", "74"
-]
+# Liste des 22 secteurs
+SECTORS = ["1", "2", "3", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "17", "18", "19", "20", "71", "72", "73", "74"]
 
-# Périodes pour les pannes (seulement 2 périodes pour éviter les timeouts)
+# Périodes pour les pannes
 PERIODS = [
     "2025-10-01T00:00:00",
-    "2025-07-01T00:00:00"
-]
-
-# Périodes pour les devis
-DEVIS_PERIODS = [
+    "2025-07-01T00:00:00",
     "2025-01-01T00:00:00",
     "2024-01-01T00:00:00",
     "2023-01-01T00:00:00",
+    "2022-01-01T00:00:00",
     "2020-01-01T00:00:00"
 ]
 
-# Périodes pour l'historique des missions
-MISSIONS_PERIODS = [
-    "2025-01-01T00:00:00",
-    "2024-01-01T00:00:00",
-    "2023-01-01T00:00:00"
-]
-
-# Périodes pour les contrôles
-CONTROLES_PERIODS = [
-    "2024-01-01T00:00:00",
-    "2020-01-01T00:00:00"
-]
-
-# ============================================================================
-# UTILITAIRES
-# ============================================================================
-
+# SSL Context
 try:
     ssl_context = ssl.create_default_context()
 except:
     ssl_context = ssl._create_unverified_context()
 
+# ============================================================
+# UTILITAIRES
+# ============================================================
+
 def safe_str(value, max_len=None):
-    """Convertit une valeur en string safe, avec longueur max optionnelle"""
+    """Convertit en string sécurisé"""
     if value is None:
         return None
     try:
@@ -177,7 +62,7 @@ def safe_str(value, max_len=None):
         return None
 
 def safe_int(value):
-    """Convertit une valeur en entier safe"""
+    """Convertit en entier sécurisé"""
     if value is None:
         return None
     if isinstance(value, int):
@@ -187,121 +72,39 @@ def safe_int(value):
     except:
         return None
 
-def safe_float(value):
-    """Convertit une valeur en float safe (gère la virgule française)"""
-    if value is None:
-        return None
-    try:
-        return float(str(value).strip().replace(',', '.'))
-    except:
-        return None
-
 def http_request(url, method='GET', data=None, headers=None, timeout=30):
-    """Effectue une requête HTTP générique"""
+    """Requête HTTP générique"""
+    headers = headers or {}
+    if data and isinstance(data, (dict, list)):
+        data = json.dumps(data).encode('utf-8')
+        headers.setdefault('Content-Type', 'application/json')
+    elif data and isinstance(data, str):
+        data = data.encode('utf-8')
+    
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
-        req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
         with urllib.request.urlopen(req, timeout=timeout, context=ssl_context) as resp:
             return resp.status, resp.read().decode('utf-8')
     except urllib.error.HTTPError as e:
-        return e.code, ''
+        return e.code, e.read().decode('utf-8') if e.fp else str(e)
     except Exception as e:
         return 0, str(e)
 
-# ============================================================================
-# SUPABASE HELPERS
-# ============================================================================
+# ============================================================
+# PROGILIFT API
+# ============================================================
 
-def supabase_upsert(table, data):
-    """Insert ou update dans Supabase (nécessite une contrainte unique)"""
-    if not SUPABASE_URL or not data:
-        return False
-    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{table}"
-    headers = {
-        'apikey': SUPABASE_KEY,
-        'Authorization': f'Bearer {SUPABASE_KEY}',
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
-    }
-    status, _ = http_request(url, 'POST', json.dumps(data).encode(), headers, 30)
-    return status in [200, 201, 204]
-
-def supabase_insert(table, data):
-    """Insert simple dans Supabase"""
-    if not SUPABASE_URL or not data:
-        return False
-    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{table}"
-    headers = {
-        'apikey': SUPABASE_KEY,
-        'Authorization': f'Bearer {SUPABASE_KEY}',
-        'Content-Type': 'application/json',
-        'Prefer': 'return=minimal'
-    }
-    status, _ = http_request(url, 'POST', json.dumps(data).encode(), headers, 30)
-    return status in [200, 201, 204]
-
-def supabase_delete(table, condition="id=gte.0"):
-    """Supprime des enregistrements dans Supabase"""
-    if not SUPABASE_URL:
-        return False
-    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{table}?{condition}"
-    headers = {
-        'apikey': SUPABASE_KEY,
-        'Authorization': f'Bearer {SUPABASE_KEY}',
-        'Prefer': 'return=minimal'
-    }
-    status, _ = http_request(url, 'DELETE', None, headers, 30)
-    return status in [200, 204]
-
-def supabase_update(table, id_field, id_value, data):
-    """Met à jour un enregistrement dans Supabase"""
-    if not SUPABASE_URL or not data:
-        return False
-    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{table}?{id_field}=eq.{id_value}"
-    headers = {
-        'apikey': SUPABASE_KEY,
-        'Authorization': f'Bearer {SUPABASE_KEY}',
-        'Content-Type': 'application/json',
-        'Prefer': 'return=minimal'
-    }
-    status, _ = http_request(url, 'PATCH', json.dumps(data).encode(), headers, 30)
-    return status in [200, 204]
-
-# ============================================================================
-# PROGILIFT SOAP CLIENT
-# ============================================================================
-
-# Cache global pour le WSID (évite de recréer une session à chaque appel)
-_wsid_cache = {
-    'wsid': None,
-    'created_at': None,
-    'max_age': 300  # 5 minutes max
-}
-
-def progilift_call(method, params, wsid=None, timeout=30):
-    """
-    Appelle une méthode SOAP ProgiLift
-    
-    Args:
-        method: Nom de la méthode (ex: get_Synchro_Wsoucont)
-        params: Dict des paramètres
-        wsid: Session ID (obtenu après authentification)
-        timeout: Timeout en secondes
-    
-    Returns:
-        str: Corps de la réponse XML ou None si erreur
-    """
-    params_xml = ""
-    if params:
-        for k, v in params.items():
-            if v is not None:
-                v_esc = str(v).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                params_xml += f"<ws:{k}>{v_esc}</ws:{k}>"
-    
+def progilift_call(method, params, wsid=None, timeout=60):
+    """Appel SOAP à Progilift"""
     wsid_xml = f'<ws:WSID xsi:type="xsd:hexBinary" soap:mustUnderstand="1">{wsid}</ws:WSID>' if wsid else ""
+    
+    params_xml = ""
+    for k, v in params.items():
+        params_xml += f"<ws:{k}>{v}</ws:{k}>"
     
     soap = f'''<?xml version="1.0" encoding="UTF-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" 
-               xmlns:ws="{WS_NAMESPACE}" 
+               xmlns:ws="urn:WS_Progilift" 
                xmlns:xsd="http://www.w3.org/2001/XMLSchema" 
                xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <soap:Header>{wsid_xml}</soap:Header>
@@ -312,107 +115,162 @@ def progilift_call(method, params, wsid=None, timeout=30):
     
     headers = {
         'Content-Type': 'text/xml; charset=utf-8',
-        'SOAPAction': f'"{WS_NAMESPACE}/{method}"'
+        'SOAPAction': f'"urn:WS_Progilift/{method}"'
     }
-    status, body = http_request(WS_URL, 'POST', soap.encode('utf-8'), headers, timeout)
     
-    return body if status == 200 and body and "Fault" not in body else None
+    status, body = http_request(WS_URL, 'POST', soap, headers, timeout)
+    return body if status == 200 else ""
+
+def get_auth():
+    """Authentification Progilift"""
+    resp = progilift_call("IdentificationTechnicien", {"sSteCodeWeb": PROGILIFT_CODE}, None, 15)
+    if resp:
+        m = re.search(r'WSID[^>]*>([A-F0-9]+)<', resp, re.IGNORECASE)
+        if m:
+            return m.group(1)
+    return None
 
 def parse_items(xml, tag):
-    """
-    Parse une liste d'items XML
-    
-    Args:
-        xml: Réponse XML brute
-        tag: Nom du tag contenant les items (ex: tabListeWsoucont)
-    
-    Returns:
-        list: Liste de dictionnaires
-    """
+    """Parse les items XML"""
     items = []
-    if not xml:
-        return items
-    for m in re.finditer(f'<{tag}>(.*?)</{tag}>', xml, re.DOTALL):
+    pattern = f'<{tag}>(.*?)</{tag}>'
+    for m in re.finditer(pattern, xml, re.DOTALL | re.IGNORECASE):
         item = {}
         for f in re.finditer(r'<([A-Za-z0-9_]+)>([^<]*)</\1>', m.group(1)):
-            val = f.group(2).strip()
-            # Conversion automatique en int si possible
-            item[f.group(1)] = int(val) if val and val.lstrip('-').isdigit() else (val if val else None)
+            item[f.group(1)] = f.group(2).strip() if f.group(2).strip() else None
         if item:
             items.append(item)
     return items
 
-def get_auth(force_refresh=False):
-    """
-    Authentification ProgiLift avec cache et retry
-    
-    Args:
-        force_refresh: Force une nouvelle authentification
-    
-    Returns:
-        str: WSID (session ID) ou None si échec
-    """
-    global _wsid_cache
-    
-    # Vérifier le cache (sauf si force_refresh)
-    if not force_refresh and _wsid_cache['wsid'] and _wsid_cache['created_at']:
-        age = (datetime.now() - _wsid_cache['created_at']).total_seconds()
-        if age < _wsid_cache['max_age']:
-            return _wsid_cache['wsid']
-    
-    # Retry jusqu'à 3 fois
-    for attempt in range(3):
-        try:
-            resp = progilift_call("IdentificationTechnicien", {"sSteCodeWeb": PROGILIFT_CODE}, None, 30)
-            if resp:
-                m = re.search(r'WSID[^>]*>([A-F0-9]+)<', resp, re.IGNORECASE)
-                if m:
-                    wsid = m.group(1)
-                    # Mettre en cache
-                    _wsid_cache['wsid'] = wsid
-                    _wsid_cache['created_at'] = datetime.now()
-                    return wsid
-        except Exception as e:
-            pass
-        
-        # Attendre avant retry (1s, 2s, 3s)
-        if attempt < 2:
-            import time
-            time.sleep(attempt + 1)
-    
-    # Échec après 3 tentatives - invalider le cache
-    _wsid_cache['wsid'] = None
-    _wsid_cache['created_at'] = None
-    return None
+# ============================================================
+# SUPABASE API
+# ============================================================
 
-def get_auth_with_retry():
-    """
-    Obtient un WSID avec retry et rafraîchissement automatique
-    """
+def supabase_headers():
+    """Headers Supabase"""
+    return {
+        'apikey': SUPABASE_KEY,
+        'Authorization': f'Bearer {SUPABASE_KEY}',
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+    }
+
+def supabase_insert(table, data):
+    """Insert dans Supabase"""
+    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{table}"
+    headers = supabase_headers()
+    headers['Prefer'] = 'resolution=merge-duplicates,return=minimal'
+    status, _ = http_request(url, 'POST', data, headers, 15)
+    return status in [200, 201]
+
+def supabase_upsert(table, data):
+    """Upsert dans Supabase"""
+    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{table}"
+    headers = supabase_headers()
+    headers['Prefer'] = 'resolution=merge-duplicates,return=minimal'
+    status, _ = http_request(url, 'POST', data, headers, 15)
+    return status in [200, 201]
+
+def supabase_update(table, key_col, key_val, data):
+    """Update dans Supabase"""
+    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{table}?{key_col}=eq.{key_val}"
+    status, _ = http_request(url, 'PATCH', data, supabase_headers(), 15)
+    return status in [200, 204]
+
+def supabase_delete(table, filter_str=None):
+    """Delete dans Supabase"""
+    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{table}"
+    if filter_str:
+        url += f"?{filter_str}"
+    else:
+        url += "?id=gt.0"  # Delete all
+    status, _ = http_request(url, 'DELETE', None, supabase_headers(), 30)
+    return status in [200, 204]
+
+def supabase_get(table, select="*", filter_str=None, limit=None):
+    """Get depuis Supabase"""
+    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{table}?select={select}"
+    if filter_str:
+        url += f"&{filter_str}"
+    if limit:
+        url += f"&limit={limit}"
+    headers = {
+        'apikey': SUPABASE_KEY,
+        'Authorization': f'Bearer {SUPABASE_KEY}'
+    }
+    status, body = http_request(url, 'GET', None, headers, 30)
+    if status == 200:
+        return json.loads(body)
+    return []
+
+# ============================================================
+# STEP 0: Types de planning
+# ============================================================
+
+def sync_type_planning():
+    """Synchronise la table de référence type_planning depuis Wtypepla"""
     wsid = get_auth()
     if not wsid:
-        # Forcer un refresh si le premier essai échoue
-        wsid = get_auth(force_refresh=True)
-    return wsid
+        return {"status": "error", "message": "Auth failed"}
+    
+    resp = progilift_call("get_Synchro_Wtypepla", {"dhDerniereMajFichier": "2000-01-01T00:00:00"}, wsid, 30)
+    
+    # Parser les items
+    items = parse_items(resp, "tabListeWtypepla")
+    if not items:
+        items = parse_items(resp, "ST_Wtypepla")
+    if not items:
+        items = parse_items(resp, "Wtypepla")
+    
+    if not items:
+        return {"status": "error", "message": "No data in Wtypepla response", "response_size": len(resp)}
+    
+    # Supprimer et recréer
+    supabase_delete('type_planning')
+    inserted = 0
+    
+    for item in items:
+        code = safe_str(item.get('TYPEPLANNING') or item.get('typeplanning'), 50)
+        nb_visites = safe_int(item.get('NB_VISITES') or item.get('nb_visites'))
+        libelle = safe_str(item.get('LIBELLEPLAN') or item.get('libelleplan'), 200)
+        id_type = safe_int(item.get('IDWTYPEPLA') or item.get('idwtypepla'))
+        
+        if code:
+            if supabase_insert('type_planning', {
+                'id_wtypepla': id_type,
+                'code': code,
+                'nb_visites': nb_visites,
+                'libelle': libelle,
+                'updated_at': datetime.now().isoformat()
+            }):
+                inserted += 1
+    
+    return {
+        "status": "success",
+        "step": 0,
+        "type_planning_found": len(items),
+        "inserted": inserted,
+        "next": "?step=1"
+    }
 
-# ============================================================================
-# STEP 1: ARRÊTS (Appareils actuellement à l'arrêt)
-# ============================================================================
+# ============================================================
+# STEP 1: Arrêts en cours
+# ============================================================
 
 def sync_arrets():
-    """Synchronise les appareils actuellement à l'arrêt"""
-    wsid = get_auth_with_retry()
+    """Synchronise les appareils à l'arrêt"""
+    wsid = get_auth()
     if not wsid:
         return {"status": "error", "message": "Auth failed"}
     
     resp = progilift_call("get_AppareilsArret", {}, wsid, 30)
     arrets = parse_items(resp, "tabListeArrets")
     
-    # Vider et repeupler la table (données temps réel)
     supabase_delete('appareils_arret')
     inserted = 0
+    
     for a in arrets:
-        result = supabase_insert('appareils_arret', {
+        if supabase_insert('appareils_arret', {
             'id_wsoucont': safe_int(a.get('nIDSOUCONT')),
             'id_panne': safe_int(a.get('nClepanne')),
             'date_appel': safe_str(a.get('sDateAppel'), 20),
@@ -420,445 +278,332 @@ def sync_arrets():
             'motif': safe_str(a.get('sMotifAppel'), 500),
             'demandeur': safe_str(a.get('sDemandeur'), 100),
             'updated_at': datetime.now().isoformat()
-        })
-        if result:
+        }):
             inserted += 1
     
     return {
-        "status": "success", 
-        "step": 1, 
-        "arrets": len(arrets), 
-        "inserted": inserted, 
+        "status": "success",
+        "step": 1,
+        "arrets_found": len(arrets),
+        "inserted": inserted,
         "next": "?step=2&sector=0"
     }
 
-# ============================================================================
-# STEP 2: ÉQUIPEMENTS + PASSAGES (Wsoucont + Wsoucont2 par secteur)
-# ============================================================================
+# ============================================================
+# STEP 2: Équipements (Wsoucont)
+# ============================================================
 
 def sync_equipements(sector_idx):
-    """Synchronise les équipements ET les passages d'un secteur en une seule étape"""
-    wsid = get_auth_with_retry()
+    """Synchronise les équipements pour un secteur"""
+    if sector_idx >= len(SECTORS):
+        return {"status": "done", "message": "All sectors completed", "next": "?step=2b&sector=0"}
+    
+    sector = SECTORS[sector_idx]
+    wsid = get_auth()
     if not wsid:
         return {"status": "error", "message": "Auth failed"}
     
-    if sector_idx >= len(SECTORS):
-        return {"status": "success", "step": 2, "message": "All 22 sectors done", "next": "?step=3&period=0"}
-    
-    sector = SECTORS[sector_idx]
-    
-    # ===== PARTIE 1: Récupérer les équipements (Wsoucont) =====
     resp = progilift_call("get_Synchro_Wsoucont", {
         "dhDerniereMajFichier": "2000-01-01T00:00:00",
         "sListeSecteursTechnicien": sector
-    }, wsid, 90)
+    }, wsid, 120)
     
     items = parse_items(resp, "tabListeWsoucont")
-    equip_list = []
+    upserted = 0
     
     for e in items:
-        id_ws = safe_int(e.get('IDWSOUCONT'))
-        if id_ws:
-            equip_list.append({
-                'id_wsoucont': id_ws,
-                'id_wcontrat': safe_int(e.get('IDWCONTRAT')),
-                'secteur': safe_str(e.get('SECTEUR'), 20),
-                'ascenseur': safe_str(e.get('ASCENSEUR'), 50),
-                'adresse': safe_str(e.get('DES2'), 200),
-                'ville': safe_str(e.get('DES3'), 200),
-                'des4': safe_str(e.get('DES4'), 200),
-                'des6': safe_str(e.get('DES6'), 200),
-                'des7': safe_str(e.get('DES7'), 200),
-                # Champs personnalisables DIV1-DIV15
-                'div1': safe_str(e.get('DIV1'), 100),
-                'div2': safe_str(e.get('DIV2'), 100),
-                'div3': safe_str(e.get('DIV3'), 100),
-                'div4': safe_str(e.get('DIV4'), 100),
-                'div5': safe_str(e.get('DIV5'), 100),
-                'div6': safe_str(e.get('DIV6'), 100),
-                'div7': safe_str(e.get('DIV7'), 100),
-                'div8': safe_str(e.get('DIV8'), 100),
-                'div9': safe_str(e.get('DIV9'), 100),
-                'div10': safe_str(e.get('DIV10'), 100),
-                'div11': safe_str(e.get('DIV11'), 200),
-                'div12': safe_str(e.get('DIV12'), 200),
-                'div13': safe_str(e.get('DIV13'), 200),
-                'div14': safe_str(e.get('DIV14'), 200),
-                'div15': safe_str(e.get('DIV15'), 200),
-                'numappcli': safe_str(e.get('NUMAPPCLI'), 50),
-                # Planning mensuel des visites
-                'jan': safe_int(e.get('JAN')),
-                'fev': safe_int(e.get('FEV')),
-                'mar': safe_int(e.get('MAR')),
-                'avr': safe_int(e.get('AVR')),
-                'mai': safe_int(e.get('MAI')),
-                'jui': safe_int(e.get('JUI')),
-                'jul': safe_int(e.get('JUL')),
-                'aou': safe_int(e.get('AOU')),
-                'sep': safe_int(e.get('SEP')),
-                'oct': safe_int(e.get('OCT')),
-                'nov': safe_int(e.get('NOV')),
-                'dec': safe_int(e.get('DEC')),
-                # Données brutes JSON
-                'data_wsoucont': json.dumps(e),
-                'updated_at': datetime.now().isoformat()
-            })
+        id_wsoucont = safe_int(e.get('IDWSOUCONT'))
+        if not id_wsoucont:
+            continue
+        
+        data = {
+            'id_wsoucont': id_wsoucont,
+            'id_wcontrat': safe_int(e.get('IDWCONTRAT')),
+            'secteur': safe_int(e.get('SECTEUR')),
+            'ascenseur': safe_str(e.get('ASCENSEUR'), 50),
+            'indice': safe_int(e.get('INDICE')),
+            'adresse': safe_str(e.get('DES2'), 200),
+            'ville': safe_str(e.get('DES3'), 200),
+            'code_postal': safe_str(e.get('DES3', '')[:5] if e.get('DES3') else None, 10),
+            'genre': safe_int(e.get('GENRE')),
+            'type_appareil': safe_str(e.get('TYPE'), 50),
+            'marque': safe_str(e.get('DIV1'), 100),
+            'modele': safe_str(e.get('DIV2'), 100),
+            'num_serie': safe_str(e.get('DIV7'), 100),
+            'des4': safe_str(e.get('DES4'), 200),
+            'des6': safe_str(e.get('DES6'), 200),
+            'des7': safe_str(e.get('DES7'), 200),
+            'div1': safe_str(e.get('DIV1'), 100),
+            'div2': safe_str(e.get('DIV2'), 100),
+            'div3': safe_str(e.get('DIV3'), 100),
+            'div4': safe_str(e.get('DIV4'), 100),
+            'div5': safe_str(e.get('DIV5'), 100),
+            'div6': safe_str(e.get('DIV6'), 100),
+            'div7': safe_str(e.get('DIV7'), 100),
+            'div8': safe_str(e.get('DIV8'), 100),
+            'div9': safe_str(e.get('DIV9'), 100),
+            'div10': safe_str(e.get('DIV10'), 100),
+            'div11': safe_str(e.get('DIV11'), 100),
+            'div12': safe_str(e.get('DIV12'), 100),
+            'div13': safe_str(e.get('DIV13'), 100),
+            'div14': safe_str(e.get('DIV14'), 100),
+            'div15': safe_str(e.get('DIV15'), 100),
+            'refcli': safe_str(e.get('REFCLI'), 100),
+            'refcli2': safe_str(e.get('REFCLI2'), 100),
+            'refcli3': safe_str(e.get('REFCLI3'), 100),
+            'numappcli': safe_str(e.get('NUMAPPCLI'), 50),
+            'nom_convivial': safe_str(e.get('NOM_CONVIVIAL'), 100),
+            'localisation': safe_str(e.get('LOCALISATION'), 200),
+            'telcabine': safe_str(e.get('TELCABINE'), 50),
+            'idtype_depannage': safe_int(e.get('IDTYPE_DEPANNAGE')),
+            'securite': safe_int(e.get('SECURITE')),
+            'securite2': safe_int(e.get('SECURITE2')),
+            'typeplanning': safe_str(e.get('TYPEPLANNING'), 50),
+            'wordre': safe_int(e.get('WORDRE')),
+            'ordre2': safe_int(e.get('ORDRE2')),
+            'code_acquittement': safe_str(e.get('CODE_ACQUITTEMENT'), 50),
+            'date_heure_modif': safe_str(e.get('DATE_HEURE_MODIF'), 30),
+            'jan': safe_int(e.get('JAN')),
+            'fev': safe_int(e.get('FEV')),
+            'mar': safe_int(e.get('MAR')),
+            'avr': safe_int(e.get('AVR')),
+            'mai': safe_int(e.get('MAI')),
+            'jui': safe_int(e.get('JUI')),
+            'jul': safe_int(e.get('JUL')),
+            'aou': safe_int(e.get('AOU')),
+            'sep': safe_int(e.get('SEP')),
+            'oct': safe_int(e.get('OCT')),
+            'nov': safe_int(e.get('NOV')),
+            'dec': safe_int(e.get('DEC')),
+            'data_wsoucont': json.dumps(e),
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        if supabase_upsert('equipements', data):
+            upserted += 1
     
-    # Upsert équipements par batches de 30
-    for i in range(0, len(equip_list), 30):
-        supabase_upsert('equipements', equip_list[i:i+30])
-    
-    # ===== PARTIE 2: Récupérer les passages (Wsoucont2) =====
-    resp2 = progilift_call("get_Synchro_Wsoucont2", {
-        "dhDerniereMajFichier": "2000-01-01T00:00:00",
-        "sListeSecteursTechnicien": sector
-    }, wsid, 90)
-    
-    passages_items = parse_items(resp2, "tabListeWsoucont2")
-    passages_updated = 0
-    
-    for e in passages_items:
-        id_ws = safe_int(e.get('IDWSOUCONT'))
-        if id_ws:
-            update_data = {'updated_at': datetime.now().isoformat()}
-            for i in range(1, 11):
-                update_data[f'lib{i}'] = safe_str(e.get(f'LIB{i}'), 100)
-                update_data[f'datepass{i}'] = safe_int(e.get(f'DATEPASS{i}'))
-            
-            if supabase_update('equipements', 'id_wsoucont', id_ws, update_data):
-                passages_updated += 1
-    
-    next_idx = sector_idx + 1
-    next_url = f"?step=2&sector={next_idx}" if next_idx < len(SECTORS) else "?step=3&period=0"
-    
+    next_sector = sector_idx + 1
     return {
         "status": "success",
         "step": 2,
         "sector": sector,
-        "sector_index": f"{sector_idx + 1}/{len(SECTORS)}",
-        "equipements": len(equip_list),
-        "passages": passages_updated,
-        "next": next_url
+        "sector_idx": sector_idx,
+        "equipements_found": len(items),
+        "upserted": upserted,
+        "next": f"?step=2&sector={next_sector}" if next_sector < len(SECTORS) else "?step=2b&sector=0"
     }
 
-# Fonction de compatibilité (redirige vers sync_equipements)
-def sync_passages(sector_idx):
-    """Deprecated: Les passages sont maintenant inclus dans sync_equipements"""
-    return {"status": "success", "step": "2b", "message": "Passages now included in step 2", "next": "?step=3&period=0"}
+# ============================================================
+# STEP 2b: Passages et données complémentaires (Wsoucont2)
+# ============================================================
 
-# ============================================================================
-# STEP 3: PANNES (Wpanne par période)
-# ============================================================================
+def sync_passages(sector_idx):
+    """Synchronise les passages (Wsoucont2) pour un secteur"""
+    if sector_idx >= len(SECTORS):
+        return {"status": "done", "message": "All sectors completed", "next": "?step=3&period=0"}
+    
+    sector = SECTORS[sector_idx]
+    wsid = get_auth()
+    if not wsid:
+        return {"status": "error", "message": "Auth failed"}
+    
+    resp = progilift_call("get_Synchro_Wsoucont2", {
+        "dhDerniereMajFichier": "2000-01-01T00:00:00",
+        "sListeSecteursTechnicien": sector
+    }, wsid, 120)
+    
+    items = parse_items(resp, "tabListeWsoucont2")
+    updated = 0
+    
+    for e in items:
+        id_wsoucont = safe_int(e.get('IDWSOUCONT'))
+        if not id_wsoucont:
+            continue
+        
+        data = {
+            'lib1': safe_str(e.get('LIB1'), 100),
+            'lib2': safe_str(e.get('LIB2'), 100),
+            'lib3': safe_str(e.get('LIB3'), 100),
+            'lib4': safe_str(e.get('LIB4'), 100),
+            'lib5': safe_str(e.get('LIB5'), 100),
+            'lib6': safe_str(e.get('LIB6'), 100),
+            'lib7': safe_str(e.get('LIB7'), 100),
+            'lib8': safe_str(e.get('LIB8'), 100),
+            'lib9': safe_str(e.get('LIB9'), 100),
+            'lib10': safe_str(e.get('LIB10'), 100),
+            'datepass1': safe_int(e.get('DATEPASS1')),
+            'datepass2': safe_int(e.get('DATEPASS2')),
+            'datepass3': safe_int(e.get('DATEPASS3')),
+            'datepass4': safe_int(e.get('DATEPASS4')),
+            'datepass5': safe_int(e.get('DATEPASS5')),
+            'datepass6': safe_int(e.get('DATEPASS6')),
+            'datepass7': safe_int(e.get('DATEPASS7')),
+            'datepass8': safe_int(e.get('DATEPASS8')),
+            'datepass9': safe_int(e.get('DATEPASS9')),
+            'datepass10': safe_int(e.get('DATEPASS10')),
+            'dat1': safe_int(e.get('DAT1')),
+            'dat2': safe_int(e.get('DAT2')),
+            'dat3': safe_int(e.get('DAT3')),
+            'dat4': safe_int(e.get('DAT4')),
+            'dat5': safe_int(e.get('DAT5')),
+            'dat6': safe_int(e.get('DAT6')),
+            'dat7': safe_int(e.get('DAT7')),
+            'dat8': safe_int(e.get('DAT8')),
+            'dat9': safe_int(e.get('DAT9')),
+            'dat10': safe_int(e.get('DAT10')),
+            'dat11': safe_int(e.get('DAT11')),
+            'dat12': safe_int(e.get('DAT12')),
+            'dat13': safe_int(e.get('DAT13')),
+            'dat14': safe_int(e.get('DAT14')),
+            'dat15': safe_int(e.get('DAT15')),
+            'txt1': safe_str(e.get('TXT1'), 500),
+            'txt2': safe_str(e.get('TXT2'), 500),
+            'txt3': safe_str(e.get('TXT3'), 500),
+            'txt4': safe_str(e.get('TXT4'), 500),
+            'txt5': safe_str(e.get('TXT5'), 500),
+            'data_wsoucont2': json.dumps(e),
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        if supabase_update('equipements', 'id_wsoucont', id_wsoucont, data):
+            updated += 1
+    
+    next_sector = sector_idx + 1
+    return {
+        "status": "success",
+        "step": "2b",
+        "sector": sector,
+        "sector_idx": sector_idx,
+        "passages_found": len(items),
+        "updated": updated,
+        "next": f"?step=2b&sector={next_sector}" if next_sector < len(SECTORS) else "?step=3&period=0"
+    }
+
+# ============================================================
+# STEP 3: Pannes
+# ============================================================
 
 def sync_pannes(period_idx):
-    """Synchronise les pannes d'une période avec retry"""
-    # Force refresh du WSID pour les pannes (requêtes longues)
-    wsid = get_auth(force_refresh=True)
-    if not wsid:
-        # Retry après pause
-        time.sleep(5)
-        wsid = get_auth(force_refresh=True)
-    if not wsid:
-        return {"status": "error", "message": "Auth failed after retry"}
-    
+    """Synchronise les pannes pour une période"""
     if period_idx >= len(PERIODS):
-        return {"status": "success", "step": 3, "message": "All pannes done", "next": "?step=4&period=0"}
+        return {"status": "done", "message": "All periods completed", "next": "?step=4"}
     
-    period = PERIODS[period_idx]
+    since_date = PERIODS[period_idx]
+    wsid = get_auth()
+    if not wsid:
+        return {"status": "error", "message": "Auth failed"}
     
-    # Timeout augmenté à 180s pour les grosses requêtes de pannes
-    resp = progilift_call("get_Synchro_Wpanne", {"dhDerniereMajFichier": period}, wsid, 180)
-    
-    # Si échec, retry avec nouvelle auth
-    if not resp:
-        time.sleep(3)
-        wsid = get_auth(force_refresh=True)
-        if wsid:
-            resp = progilift_call("get_Synchro_Wpanne", {"dhDerniereMajFichier": period}, wsid, 180)
-    
-    if not resp:
-        return {"status": "error", "message": f"Failed to fetch pannes for period {period}"}
+    resp = progilift_call("get_Synchro_Wpanne", {
+        "dhDerniereMajFichier": since_date
+    }, wsid, 180)
     
     items = parse_items(resp, "tabListeWpanne")
+    upserted = 0
     
-    pannes_list = []
     for p in items:
-        pid = safe_int(p.get('P0CLEUNIK'))
-        if pid:
-            pannes_list.append({
-                'id_panne': pid,
-                'id_wsoucont': safe_int(p.get('IDWSOUCONT')),
-                'date_panne': safe_str(p.get('DATE'), 20),
-                'jour': safe_str(p.get('JOUR'), 20),
-                'depanneur': safe_str(p.get('DEPANNEUR'), 100),
-                'libelle': safe_str(p.get('PANNES'), 200),
-                'heure_inter': safe_str(p.get('INTER'), 20),
-                'heure_fin': safe_str(p.get('HRFININTER'), 20),
-                'duree': safe_int(p.get('DUREE')),
-                'ensemble': safe_int(p.get('ENSEMBLE')),
-                'local_code': safe_int(p.get('LOCAL_')),
-                'cause': safe_int(p.get('CAUSE')),
-                'motif': safe_str(p.get('MOTIF'), 100),
-                'note': safe_str(p.get('NOTE2'), 500),
-                'data': json.dumps(p),
-                'updated_at': datetime.now().isoformat()
-            })
+        id_panne = safe_int(p.get('IDWPANNE'))
+        if not id_panne:
+            continue
+        
+        data = {
+            'id_panne': id_panne,
+            'id_wsoucont': safe_int(p.get('IDWSOUCONT')),
+            'ascenseur': safe_str(p.get('ASCENSEUR'), 50),
+            'adresse': safe_str(p.get('ADRES'), 200),
+            'code_postal': safe_str(p.get('NUM'), 10),
+            'date_appel': safe_str(p.get('DATEAPP'), 20),
+            'heure_appel': safe_str(p.get('HEUREAPP'), 20),
+            'date_arrivee': safe_str(p.get('DATEARR'), 20),
+            'heure_arrivee': safe_str(p.get('HEUREARR'), 20),
+            'date_depart': safe_str(p.get('DATEDEP'), 20),
+            'heure_depart': safe_str(p.get('HEUREDEP'), 20),
+            'motif': safe_str(p.get('MOTIF'), 500),
+            'cause': safe_str(p.get('CAUSE'), 500),
+            'travaux': safe_str(p.get('TRAVAUX'), 1000),
+            'depanneur': safe_str(p.get('DEPANNEUR'), 100),
+            'duree': safe_int(p.get('DUREE')),
+            'type_panne': safe_str(p.get('TYPEPANNE'), 100),
+            'etat': safe_str(p.get('ETAT'), 50),
+            'demandeur': safe_str(p.get('DEMANDEUR'), 100),
+            'personnes_bloquees': safe_str(p.get('PERSBLOQ'), 10),
+            'data_wpanne': json.dumps(p),
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        if supabase_upsert('pannes', data):
+            upserted += 1
     
-    for i in range(0, len(pannes_list), 30):
-        supabase_upsert('pannes', pannes_list[i:i+30])
-    
-    next_idx = period_idx + 1
-    next_url = f"?step=3&period={next_idx}" if next_idx < len(PERIODS) else "?step=4&period=0"
-    
+    next_period = period_idx + 1
     return {
         "status": "success",
         "step": 3,
-        "period": period,
-        "period_index": f"{period_idx + 1}/{len(PERIODS)}",
-        "pannes": len(pannes_list),
-        "next": next_url
+        "period": since_date,
+        "period_idx": period_idx,
+        "pannes_found": len(items),
+        "upserted": upserted,
+        "next": f"?step=3&period={next_period}" if next_period < len(PERIODS) else "?step=4"
     }
 
-# ============================================================================
-# STEP 4: DEVIS (par période)
-# ============================================================================
+# ============================================================
+# STEP 4: Mise à jour nb_visites_an
+# ============================================================
 
-def sync_devis(period_idx):
-    """Synchronise les devis d'une période"""
-    wsid = get_auth_with_retry()
-    if not wsid:
-        return {"status": "error", "message": "Auth failed"}
+def update_nb_visites():
+    """Met à jour nb_visites_an dans equipements via type_planning"""
     
-    if period_idx >= len(DEVIS_PERIODS):
-        # Sync terminée !
-        supabase_insert('sync_logs', {
-            'sync_date': datetime.now().isoformat(),
-            'status': 'success'
-        })
-        return {"status": "success", "step": 4, "message": "SYNC COMPLETE!"}
+    # Récupérer la table type_planning
+    type_planning = supabase_get('type_planning', 'code,nb_visites')
+    if not type_planning:
+        return {"status": "error", "message": "type_planning table is empty. Run ?step=0 first."}
     
-    period = DEVIS_PERIODS[period_idx]
-    resp = progilift_call("get_Synchro_Devis", {"dhDerniereMajFichier": period}, wsid, 90)
-    items = parse_items(resp, "tabListeDevis")
+    type_map = {tp['code']: tp['nb_visites'] for tp in type_planning if tp.get('code')}
     
-    devis_list = []
-    for d in items:
-        did = safe_int(d.get('IDDEVIS')) or safe_int(d.get('ID'))
-        if did:
-            devis_list.append({
-                'id_devis': did,
-                'id_wsoucont': safe_int(d.get('IDWSOUCONT')),
-                'numero': safe_str(d.get('NUMERO'), 50),
-                'date_devis': safe_str(d.get('DATE'), 20),
-                'objet': safe_str(d.get('OBJET'), 500),
-                'montant_ht': safe_float(d.get('MONTANTHT')),
-                'montant_ttc': safe_float(d.get('MONTANTTTC')),
-                'tva': safe_float(d.get('TVA')),
-                'statut': safe_str(d.get('STATUT'), 50),
-                'date_statut': safe_str(d.get('DATESTATUT'), 20),
-                'client': safe_str(d.get('CLIENT'), 200),
-                'adresse': safe_str(d.get('ADRESSE'), 300),
-                'commentaire': safe_str(d.get('COMMENTAIRE'), 1000),
-                'data': json.dumps(d),
-                'updated_at': datetime.now().isoformat()
-            })
+    # Récupérer les équipements avec typeplanning
+    equipements = supabase_get('equipements', 'id_wsoucont,typeplanning', 'typeplanning=not.is.null')
     
-    for i in range(0, len(devis_list), 30):
-        supabase_upsert('devis', devis_list[i:i+30])
+    updated = 0
+    for eq in equipements:
+        typeplanning = eq.get('typeplanning')
+        if typeplanning and typeplanning in type_map:
+            nb_visites = type_map[typeplanning]
+            if supabase_update('equipements', 'id_wsoucont', eq['id_wsoucont'], {'nb_visites_an': nb_visites}):
+                updated += 1
     
-    next_idx = period_idx + 1
-    next_url = f"?step=4&period={next_idx}" if next_idx < len(DEVIS_PERIODS) else None
-    
-    result = {
+    return {
         "status": "success",
         "step": 4,
-        "period": period,
-        "period_index": f"{period_idx + 1}/{len(DEVIS_PERIODS)}",
-        "devis": len(devis_list)
-    }
-    
-    if next_url:
-        result["next"] = next_url
-    else:
-        result["message"] = "SYNC COMPLETE!"
-        supabase_insert('sync_logs', {'sync_date': datetime.now().isoformat(), 'status': 'success'})
-    
-    return result
-
-# ============================================================================
-# ENDPOINTS OPTIONNELS (pour extensions futures)
-# ============================================================================
-
-def sync_missions(period_idx):
-    """Synchronise l'historique des missions (optionnel)"""
-    wsid = get_auth_with_retry()
-    if not wsid:
-        return {"status": "error", "message": "Auth failed"}
-    
-    if period_idx >= len(MISSIONS_PERIODS):
-        return {"status": "success", "step": "missions", "message": "All missions done"}
-    
-    period = MISSIONS_PERIODS[period_idx]
-    resp = progilift_call("get_Synchro_Histo_Mission", {"dhDerniereMajFichier": period}, wsid, 90)
-    items = parse_items(resp, "tabListeHistoMission")
-    
-    missions_list = []
-    for m in items:
-        mid = safe_int(m.get('IDMISSION')) or safe_int(m.get('ID'))
-        if mid:
-            missions_list.append({
-                'id_mission': mid,
-                'id_wsoucont': safe_int(m.get('IDWSOUCONT')),
-                'date_mission': safe_str(m.get('DATE'), 20),
-                'type_mission': safe_str(m.get('TYPE'), 50),
-                'technicien': safe_str(m.get('TECHNICIEN'), 100),
-                'duree': safe_int(m.get('DUREE')),
-                'observations': safe_str(m.get('OBSERVATIONS'), 1000),
-                'data': json.dumps(m),
-                'updated_at': datetime.now().isoformat()
-            })
-    
-    for i in range(0, len(missions_list), 30):
-        supabase_upsert('missions', missions_list[i:i+30])
-    
-    next_idx = period_idx + 1
-    
-    return {
-        "status": "success",
-        "step": "missions",
-        "period": period,
-        "period_index": f"{period_idx + 1}/{len(MISSIONS_PERIODS)}",
-        "missions": len(missions_list),
-        "next": f"?step=missions&period={next_idx}" if next_idx < len(MISSIONS_PERIODS) else None
+        "type_planning_codes": len(type_map),
+        "equipements_with_planning": len(equipements),
+        "updated": updated,
+        "message": "nb_visites_an updated!"
     }
 
-def sync_controles(period_idx):
-    """Synchronise les contrôles réglementaires (optionnel)"""
-    wsid = get_auth_with_retry()
-    if not wsid:
-        return {"status": "error", "message": "Auth failed"}
-    
-    if period_idx >= len(CONTROLES_PERIODS):
-        return {"status": "success", "step": "controles", "message": "All controles done"}
-    
-    period = CONTROLES_PERIODS[period_idx]
-    resp = progilift_call("get_Synchro_Wcontrol", {"dhDerniereMajFichier": period}, wsid, 90)
-    items = parse_items(resp, "tabListeWcontrol")
-    
-    controles_list = []
-    for c in items:
-        cid = safe_int(c.get('IDCONTROL')) or safe_int(c.get('ID'))
-        if cid:
-            controles_list.append({
-                'id_controle': cid,
-                'id_wsoucont': safe_int(c.get('IDWSOUCONT')),
-                'date_controle': safe_str(c.get('DATE_CONTROLE') or c.get('DATE'), 20),
-                'type_controle': safe_str(c.get('TYPE_CONTROLE') or c.get('TYPE'), 100),
-                'resultat': safe_str(c.get('RESULTAT'), 50),
-                'observations': safe_str(c.get('OBSERVATIONS'), 1000),
-                'data': json.dumps(c),
-                'updated_at': datetime.now().isoformat()
-            })
-    
-    for i in range(0, len(controles_list), 30):
-        supabase_upsert('controles', controles_list[i:i+30])
-    
-    next_idx = period_idx + 1
-    
-    return {
-        "status": "success",
-        "step": "controles",
-        "period": period,
-        "period_index": f"{period_idx + 1}/{len(CONTROLES_PERIODS)}",
-        "controles": len(controles_list),
-        "next": f"?step=controles&period={next_idx}" if next_idx < len(CONTROLES_PERIODS) else None
-    }
-
-def get_equipement_detail(id_wsoucont):
-    """Récupère les détails complets d'un équipement"""
-    wsid = get_auth_with_retry()
-    if not wsid:
-        return {"status": "error", "message": "Auth failed"}
-    
-    resp = progilift_call("get_WSoucontCS_IDWSOUCONT", {"nIDWSoucont": id_wsoucont}, wsid, 30)
-    items = parse_items(resp, "WSoucontCS")
-    
-    if items:
-        return {"status": "success", "equipement": items[0]}
-    return {"status": "error", "message": "Équipement non trouvé"}
-
-# ============================================================================
-# CRON: SYNC RAPIDE (arrêts + pannes récentes)
-# ============================================================================
+# ============================================================
+# CRON: Sync rapide
+# ============================================================
 
 def sync_cron():
-    """Sync rapide pour le cron horaire - arrêts + pannes récentes uniquement"""
-    start = datetime.now()
-    stats = {"arrets": 0, "pannes": 0}
+    """Sync rapide pour cron job (arrêts + pannes récentes)"""
+    results = {}
     
-    wsid = get_auth_with_retry()
-    if not wsid:
-        return {"status": "error", "message": "Auth failed"}
+    # Arrêts
+    r1 = sync_arrets()
+    results['arrets'] = r1.get('inserted', 0)
     
-    # 1. Arrêts (temps réel)
-    resp = progilift_call("get_AppareilsArret", {}, wsid, 30)
-    arrets = parse_items(resp, "tabListeArrets")
-    supabase_delete('appareils_arret')
-    for a in arrets:
-        supabase_insert('appareils_arret', {
-            'id_wsoucont': safe_int(a.get('nIDSOUCONT')),
-            'id_panne': safe_int(a.get('nClepanne')),
-            'date_appel': safe_str(a.get('sDateAppel'), 20),
-            'heure_appel': safe_str(a.get('sHeureAppel'), 20),
-            'motif': safe_str(a.get('sMotifAppel'), 500),
-            'demandeur': safe_str(a.get('sDemandeur'), 100),
-            'updated_at': datetime.now().isoformat()
-        })
-    stats["arrets"] = len(arrets)
-    
-    # 2. Pannes récentes (dernier mois)
-    resp = progilift_call("get_Synchro_Wpanne", {"dhDerniereMajFichier": "2025-12-01T00:00:00"}, wsid, 60)
-    items = parse_items(resp, "tabListeWpanne")
-    pannes_list = []
-    for p in items:
-        pid = safe_int(p.get('P0CLEUNIK'))
-        if pid:
-            pannes_list.append({
-                'id_panne': pid,
-                'id_wsoucont': safe_int(p.get('IDWSOUCONT')),
-                'date_panne': safe_str(p.get('DATE'), 20),
-                'depanneur': safe_str(p.get('DEPANNEUR'), 100),
-                'libelle': safe_str(p.get('PANNES'), 200),
-                'heure_inter': safe_str(p.get('INTER'), 20),
-                'heure_fin': safe_str(p.get('HRFININTER'), 20),
-                'data': json.dumps(p),
-                'updated_at': datetime.now().isoformat()
-            })
-    for i in range(0, len(pannes_list), 50):
-        supabase_upsert('pannes', pannes_list[i:i+50])
-    stats["pannes"] = len(pannes_list)
-    
-    duration = (datetime.now() - start).total_seconds()
-    
-    # Log
-    supabase_insert('sync_logs', {
-        'sync_date': datetime.now().isoformat(),
-        'status': 'cron',
-        'equipements_count': 0,
-        'pannes_count': stats["pannes"],
-        'duration_seconds': round(duration, 1)
-    })
+    # Pannes récentes (première période seulement)
+    r2 = sync_pannes(0)
+    results['pannes'] = r2.get('upserted', 0)
     
     return {
         "status": "success",
         "mode": "cron",
-        "stats": stats,
-        "duration": round(duration, 1)
+        "results": results,
+        "timestamp": datetime.now().isoformat()
     }
 
-# ============================================================================
-# VERCEL HANDLER
-# ============================================================================
+# ============================================================
+# HANDLER HTTP (Vercel)
+# ============================================================
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -879,15 +624,15 @@ class handler(BaseHTTPRequestHandler):
             parsed = urlparse(self.path)
             params = parse_qs(parsed.query)
             
-            step = params.get('step', ['0'])[0]
+            step = params.get('step', [''])[0]
             sector = int(params.get('sector', ['0'])[0])
             period = int(params.get('period', ['0'])[0])
             mode = params.get('mode', [''])[0]
-            id_equip = params.get('id', [''])[0]
             
-            # Router
             if mode == 'cron':
                 result = sync_cron()
+            elif step == '0':
+                result = sync_type_planning()
             elif step == '1':
                 result = sync_arrets()
             elif step == '2':
@@ -897,66 +642,35 @@ class handler(BaseHTTPRequestHandler):
             elif step == '3':
                 result = sync_pannes(period)
             elif step == '4':
-                result = sync_devis(period)
-            # Endpoints optionnels
-            elif step == 'missions':
-                result = sync_missions(period)
-            elif step == 'controles':
-                result = sync_controles(period)
-            elif step == 'detail' and id_equip:
-                result = get_equipement_detail(int(id_equip))
+                result = update_nb_visites()
             else:
-                # Documentation
                 result = {
                     "status": "ready",
-                    "message": "Progilift Sync API v2.0",
-                    "version": "2.0.0",
+                    "message": "Progilift Sync API v2",
                     "config": {
-                        "sectors_count": len(SECTORS),
-                        "periods_count": len(PERIODS),
-                        "devis_periods_count": len(DEVIS_PERIODS),
-                        "missions_periods_count": len(MISSIONS_PERIODS),
-                        "controles_periods_count": len(CONTROLES_PERIODS)
+                        "sectors": len(SECTORS),
+                        "periods": len(PERIODS)
                     },
                     "endpoints": {
-                        "status": "GET / → Cette documentation",
-                        "cron": "GET ?mode=cron → Sync rapide (arrêts + pannes récentes)",
-                        "step1": "GET ?step=1 → Arrêts",
-                        "step2": "GET ?step=2&sector=0 → Équipements (0-21)",
-                        "step2b": "GET ?step=2b&sector=0 → 10 derniers passages (0-21)",
-                        "step3": "GET ?step=3&period=0 → Pannes (0-6)",
-                        "step4": "GET ?step=4&period=0 → Devis (0-3)",
-                        "missions": "GET ?step=missions&period=0 → Historique missions (optionnel)",
-                        "controles": "GET ?step=controles&period=0 → Contrôles (optionnel)",
-                        "detail": "GET ?step=detail&id=1234 → Détail équipement (optionnel)"
+                        "step0": "?step=0 → Types planning (référentiel nb_visites)",
+                        "step1": "?step=1 → Arrêts en cours",
+                        "step2": "?step=2&sector=0..21 → Équipements (Wsoucont)",
+                        "step2b": "?step=2b&sector=0..21 → Passages (Wsoucont2)",
+                        "step3": "?step=3&period=0..6 → Pannes",
+                        "step4": "?step=4 → Mise à jour nb_visites_an",
+                        "cron": "?mode=cron → Sync rapide"
                     },
-                    "full_sync_sequence": "?step=1 → ?step=2&sector=0..21 → ?step=2b&sector=0..21 → ?step=3&period=0..6 → ?step=4&period=0..3",
-                    "progilift_info": {
-                        "ws_url": WS_URL,
-                        "available_operations": [
-                            "IdentificationTechnicien",
-                            "get_AppareilsArret",
-                            "get_Synchro_Wsoucont",
-                            "get_Synchro_Wsoucont2", 
-                            "get_Synchro_Wpanne",
-                            "get_Synchro_Devis",
-                            "get_Synchro_Histo_Mission",
-                            "get_Synchro_Wcontrol",
-                            "get_WSoucontCS_IDWSOUCONT",
-                            "get_Synchro_WsorstockWP",
-                            "get_Synchro_Cloud",
-                            "get_Synchro_EtatDesAppareils",
-                            "get_Synchro_MotifsRendusPannes",
-                            "get_Synchro_SuiviDemandesDevis",
-                            "get_Droits",
-                            "get_RDV_PourUnTechnicien_AjdEtDemain"
-                        ]
-                    }
+                    "full_sync_order": "0 → 1 → 2 (x22) → 2b (x22) → 3 (x7) → 4"
                 }
-        except Exception as e:
-            result = {"status": "error", "message": str(e), "trace": traceback.format_exc()[:500]}
         
-        body = json.dumps(result, ensure_ascii=False, indent=2).encode('utf-8')
+        except Exception as e:
+            result = {
+                "status": "error",
+                "message": str(e),
+                "trace": traceback.format_exc()[:500]
+            }
+        
+        body = json.dumps(result, ensure_ascii=False).encode('utf-8')
         self.send_response(200)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Access-Control-Allow-Origin', '*')
