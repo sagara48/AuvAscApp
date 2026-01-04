@@ -19197,6 +19197,7 @@ const TourneesTab = ({ equipements, user, showToast }) => {
     const [selectedSuggestions, setSelectedSuggestions] = useState([]);
     const [coordsEdit, setCoordsEdit] = useState({ latitude: '', longitude: '' });
     const [selectedLieuDepart, setSelectedLieuDepart] = useState(null);
+    const [expandedSecteurs, setExpandedSecteurs] = useState({});
     const mapContainerRef = useRef(null);
     const mapInstanceRef = useRef(null);
     
@@ -19210,8 +19211,26 @@ const TourneesTab = ({ equipements, user, showToast }) => {
     const absenceTypes = { conge: { label: 'Congé', color: '#3B82F6', icon: '🏖️' }, rtt: { label: 'RTT', color: '#10B981', icon: '📅' }, maladie: { label: 'Maladie', color: '#EF4444', icon: '🏥' }, formation: { label: 'Formation', color: '#8B5CF6', icon: '📚' }, autre: { label: 'Autre', color: '#6B7280', icon: '📌' } };
     const lieuTypes = { entreprise: { label: 'Siège/Entreprise', icon: '🏢' }, domicile: { label: 'Domicile', icon: '🏠' }, hotel: { label: 'Hôtel', icon: '🏨' }, depot: { label: 'Dépôt', icon: '📦' }, autre: { label: 'Autre', icon: '📍' } };
     
-    // Lieu de départ par défaut (siège)
     const SIEGE_COORDS = { latitude: 45.7772, longitude: 3.0870, nom: 'Siège Auvergne Ascenseurs' };
+    
+    // ========== SECTEURS AUTORISÉS ==========
+    
+    // Récupérer les secteurs autorisés depuis le profil utilisateur
+    const secteursAutorises = useMemo(() => {
+        // Utiliser la colonne "sectors" du profil pour TOUS les utilisateurs
+        if (user?.sectors && Array.isArray(user.sectors) && user.sectors.length > 0) {
+            return user.sectors;
+        }
+        
+        // Par défaut, tous les secteurs (si aucun secteur défini)
+        return null;
+    }, [user]);
+    
+    // Filtrer les équipements par secteurs autorisés (basé sur contrat.secteur)
+    const equipementsFiltres = useMemo(() => {
+        if (!secteursAutorises) return equipements;
+        return equipements.filter(eq => secteursAutorises.includes(eq.secteur));
+    }, [equipements, secteursAutorises]);
     
     // ========== COORDONNÉES GPS ==========
     
@@ -19226,21 +19245,15 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         'ROMAGNAT': [45.7180, 3.0920], 'PONT DU CHATEAU': [45.7980, 3.2490], 'LEMPDES': [45.7710, 3.1930],
         'GERZAT': [45.8220, 3.1440], 'CEBAZAT': [45.8320, 3.0980], 'BLANZAT': [45.8280, 3.0720],
         'DURTOL': [45.7920, 3.0420], 'NOHANENT': [45.8050, 3.0380], 'SAYAT': [45.8180, 3.0560],
-        'CHATEL-GUYON': [45.9220, 3.0650], 'VOLVIC': [45.8720, 3.0400], 'MOZAC': [45.8910, 3.0990],
-        'ENNEZAT': [45.8970, 3.2180], 'MARINGUES': [45.9270, 3.3340], 'LEZOUX': [45.8290, 3.3790],
-        'COURPIERE': [45.7560, 3.5440], 'BILLOM': [45.7230, 3.3400], 'VIC LE COMTE': [45.6430, 3.2500],
-        'VEYRE MONTON': [45.6860, 3.1520], 'LA BOURBOULE': [45.5880, 2.7380], 'LE MONT DORE': [45.5740, 2.8080],
-        'SAINT NECTAIRE': [45.5830, 2.9940], 'BESSE': [45.5170, 2.9340], 'CHAMPEIX': [45.5890, 3.1340]
+        'CHATEL-GUYON': [45.9220, 3.0650], 'VOLVIC': [45.8720, 3.0400], 'MOZAC': [45.8910, 3.0990]
     };
     
     const getEquipementCoords = useCallback((eq) => {
         if (!eq) return [45.7772, 3.0870];
         if (eq.latitude && eq.longitude) return [parseFloat(eq.latitude), parseFloat(eq.longitude)];
-        
         const ville = (eq.ville || '').toUpperCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         for (const [key, coords] of Object.entries(villeCoords)) {
-            const keyNorm = key.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-            if (ville.includes(keyNorm) || keyNorm.includes(ville)) {
+            if (ville.includes(key) || key.includes(ville)) {
                 const hash = (eq.adresse || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
                 return [coords[0] + (hash % 100) / 10000, coords[1] + (hash % 100) / 10000];
             }
@@ -19259,75 +19272,47 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }, []);
     
-    // Obtenir le lieu de départ pour un technicien
     const getLieuDepartTechnicien = useCallback((techId) => {
         if (!techId) return SIEGE_COORDS;
-        
         const tech = techniciens.find(t => t.id === techId);
-        
-        // 1. Lieu défini par défaut pour ce technicien
         if (tech?.lieu_depart_defaut) {
             const lieu = lieuxDepart.find(l => l.id === tech.lieu_depart_defaut);
-            if (lieu) return { latitude: parseFloat(lieu.latitude), longitude: parseFloat(lieu.longitude), nom: lieu.nom };
+            if (lieu) return { latitude: parseFloat(lieu.latitude), longitude: parseFloat(lieu.longitude), nom: lieu.nom, id: lieu.id };
         }
-        
-        // 2. Lieu personnel du technicien
         const lieuPerso = lieuxDepart.find(l => l.technicien_id === techId);
-        if (lieuPerso) return { latitude: parseFloat(lieuPerso.latitude), longitude: parseFloat(lieuPerso.longitude), nom: lieuPerso.nom };
-        
-        // 3. Domicile du technicien
-        if (tech?.domicile_latitude && tech?.domicile_longitude) {
-            return { latitude: parseFloat(tech.domicile_latitude), longitude: parseFloat(tech.domicile_longitude), nom: 'Domicile' };
-        }
-        
-        // 4. Lieu par défaut (siège)
+        if (lieuPerso) return { latitude: parseFloat(lieuPerso.latitude), longitude: parseFloat(lieuPerso.longitude), nom: lieuPerso.nom, id: lieuPerso.id };
+        if (tech?.domicile_latitude && tech?.domicile_longitude) return { latitude: parseFloat(tech.domicile_latitude), longitude: parseFloat(tech.domicile_longitude), nom: 'Domicile' };
         const siege = lieuxDepart.find(l => l.is_default && !l.technicien_id);
-        if (siege) return { latitude: parseFloat(siege.latitude), longitude: parseFloat(siege.longitude), nom: siege.nom };
-        
+        if (siege) return { latitude: parseFloat(siege.latitude), longitude: parseFloat(siege.longitude), nom: siege.nom, id: siege.id };
         return SIEGE_COORDS;
     }, [techniciens, lieuxDepart]);
     
-    // Calculer le temps de trajet avec point de départ
     const calculerTempsTrajet = useCallback((eqs, lieuDepart = null) => {
-        if (!eqs || eqs.length === 0) return { trajetAller: 0, trajetInter: 0, trajetRetour: 0, total: 0 };
-        
+        if (!eqs || eqs.length === 0) return { trajetAller: 0, trajetInter: 0, trajetRetour: 0, total: 0, distanceKm: 0 };
         const depart = lieuDepart || SIEGE_COORDS;
         let trajetAller = 0, trajetInter = 0, trajetRetour = 0;
-        
-        // Trajet aller: départ → premier équipement
         const [lat1, lon1] = getEquipementCoords(eqs[0]);
         trajetAller = calculerDistance(depart.latitude, depart.longitude, lat1, lon1);
-        
-        // Trajets inter-équipements
         for (let i = 0; i < eqs.length - 1; i++) {
             const [latA, lonA] = getEquipementCoords(eqs[i]);
             const [latB, lonB] = getEquipementCoords(eqs[i + 1]);
             trajetInter += calculerDistance(latA, lonA, latB, lonB);
         }
-        
-        // Trajet retour: dernier équipement → départ
         const [latN, lonN] = getEquipementCoords(eqs[eqs.length - 1]);
         trajetRetour = calculerDistance(latN, lonN, depart.latitude, depart.longitude);
-        
         const distanceTotale = trajetAller + trajetInter + trajetRetour;
-        const tempsTotalMin = Math.round((distanceTotale / VITESSE_MOYENNE) * 60 * 1.3);
-        
         return {
             trajetAller: Math.round((trajetAller / VITESSE_MOYENNE) * 60 * 1.3),
             trajetInter: Math.round((trajetInter / VITESSE_MOYENNE) * 60 * 1.3),
             trajetRetour: Math.round((trajetRetour / VITESSE_MOYENNE) * 60 * 1.3),
-            total: tempsTotalMin,
+            total: Math.round((distanceTotale / VITESSE_MOYENNE) * 60 * 1.3),
             distanceKm: Math.round(distanceTotale * 10) / 10
         };
     }, [getEquipementCoords, calculerDistance]);
     
     // ========== FRÉQUENCES ==========
     
-    const getVisitesParAn = useCallback((eq) => {
-        if (eq.nb_visites_an && eq.nb_visites_an >= 1 && eq.nb_visites_an <= 12) return eq.nb_visites_an;
-        return 6;
-    }, []);
-    
+    const getVisitesParAn = useCallback((eq) => (eq.nb_visites_an && eq.nb_visites_an >= 1 && eq.nb_visites_an <= 12) ? eq.nb_visites_an : 6, []);
     const getCycleJours = (v) => Math.round(365 / v);
     const formatCycle = (v) => ({ 1: '1x/an', 2: '2x/an', 3: '3x/an', 4: '4x/an', 6: '6x/an', 12: '12x/an' }[v] || `${v}x/an`);
     const getFrequenceColor = (v) => v <= 2 ? '#6366F1' : v <= 4 ? '#3B82F6' : v <= 6 ? '#10B981' : '#F59E0B';
@@ -19360,15 +19345,12 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         const day = date.getDay();
         if (day === 0) return { type: 'weekend', label: 'Dimanche' };
         if (day === 6) return { type: 'weekend', label: 'Samedi' };
-        
         const ferie = isJourFerie(date);
         if (ferie) return { type: 'ferie', label: ferie.nom };
-        
         if (techId) {
             const absence = isTechnicienAbsent(techId, date);
             if (absence) return { type: 'absence', label: absenceTypes[absence.type]?.label || 'Absent' };
         }
-        
         return null;
     }, [isJourFerie, isTechnicienAbsent]);
     
@@ -19379,7 +19361,8 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         
-        equipements.forEach(eq => {
+        // Utiliser equipementsFiltres au lieu de equipements
+        equipementsFiltres.forEach(eq => {
             if (!eq.secteur || !eq.ordre2) return;
             const key = `${eq.secteur}|${eq.ordre2}`;
             if (!grouped[key]) {
@@ -19396,6 +19379,7 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         
         return Object.values(grouped).map(def => {
             let maxVisites = Math.max(...Object.keys(def.nbVisitesParAn).map(Number), 6);
+            if (!isFinite(maxVisites) || maxVisites < 1) maxVisites = 6;
             const cycleJours = getCycleJours(maxVisites);
             const trajets = calculerTempsTrajet(def.equipements, selectedLieuDepart || SIEGE_COORDS);
             const dureeEntretien = def.equipements.length * DUREE_ENTRETIEN;
@@ -19413,13 +19397,26 @@ const TourneesTab = ({ equipements, user, showToast }) => {
             
             return { ...def, visitesParAn: maxVisites, cycleJours, prochaineVisite, joursRestants, statut, trajets, dureeEntretien, dureeTotale, eqMalGeoloc };
         }).sort((a, b) => {
-            const ordre = { retard: 0, aplanifier: 1, jamais: 2, ok: 3 };
-            const diff = (ordre[a.statut] || 4) - (ordre[b.statut] || 4);
-            if (diff !== 0) return diff;
-            if (a.joursRestants !== null && b.joursRestants !== null) return a.joursRestants - b.joursRestants;
-            return (a.secteur || '').localeCompare(b.secteur || '');
+            // Trier par secteur puis par ordre
+            const secteurCmp = (a.secteur || '').localeCompare(b.secteur || '');
+            if (secteurCmp !== 0) return secteurCmp;
+            return (a.ordre || 0) - (b.ordre || 0);
         });
-    }, [equipements, getVisitesParAn, calculerTempsTrajet, isWellGeolocated, selectedLieuDepart]);
+    }, [equipementsFiltres, getVisitesParAn, calculerTempsTrajet, isWellGeolocated, selectedLieuDepart]);
+    
+    // Grouper par secteur pour la vue liste
+    const tourneesParSecteur = useMemo(() => {
+        const grouped = {};
+        tourneesDef.forEach(def => {
+            if (!grouped[def.secteur]) {
+                grouped[def.secteur] = { secteur: def.secteur, tournees: [], stats: { total: 0, retard: 0, aplanifier: 0, ok: 0, jamais: 0 } };
+            }
+            grouped[def.secteur].tournees.push(def);
+            grouped[def.secteur].stats.total++;
+            grouped[def.secteur].stats[def.statut]++;
+        });
+        return Object.values(grouped).sort((a, b) => a.secteur.localeCompare(b.secteur));
+    }, [tourneesDef]);
     
     const stats = useMemo(() => ({
         total: tourneesDef.length,
@@ -19427,11 +19424,13 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         aplanifier: tourneesDef.filter(t => t.statut === 'aplanifier').length,
         ok: tourneesDef.filter(t => t.statut === 'ok').length,
         jamais: tourneesDef.filter(t => t.statut === 'jamais').length,
-        malGeoloc: tourneesDef.reduce((s, t) => s + t.eqMalGeoloc.length, 0)
-    }), [tourneesDef]);
+        malGeoloc: tourneesDef.reduce((s, t) => s + t.eqMalGeoloc.length, 0),
+        secteurs: tourneesParSecteur.length
+    }), [tourneesDef, tourneesParSecteur]);
     
     const secteurs = useMemo(() => [...new Set(tourneesDef.map(t => t.secteur))].sort(), [tourneesDef]);
     const frequences = useMemo(() => [...new Set(tourneesDef.map(t => t.visitesParAn))].sort((a, b) => a - b), [tourneesDef]);
+    
     const tourneesDefFiltered = useMemo(() => {
         let f = tourneesDef;
         if (filterSecteur) f = f.filter(t => t.secteur === filterSecteur);
@@ -19439,9 +19438,19 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         if (filterFrequence) f = f.filter(t => t.visitesParAn === parseInt(filterFrequence));
         return f;
     }, [tourneesDef, filterSecteur, filterStatut, filterFrequence]);
-    const tourneesUrgentes = useMemo(() => tourneesDef.filter(t => ['retard', 'aplanifier', 'jamais'].includes(t.statut)), [tourneesDef]);
     
-    // ========== PLANIFICATION INTELLIGENTE ==========
+    const tourneesUrgentes = useMemo(() => {
+        return tourneesDef.filter(t => ['retard', 'aplanifier', 'jamais'].includes(t.statut))
+            .sort((a, b) => {
+                const ordre = { retard: 0, aplanifier: 1, jamais: 2 };
+                const diff = (ordre[a.statut] || 3) - (ordre[b.statut] || 3);
+                if (diff !== 0) return diff;
+                if (a.joursRestants !== null && b.joursRestants !== null) return a.joursRestants - b.joursRestants;
+                return 0;
+            });
+    }, [tourneesDef]);
+    
+    // ========== PLANIFICATION ==========
     
     const getChargeParJour = useMemo(() => {
         const charge = {};
@@ -19463,7 +19472,7 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         
         allTourneesPlanifiees.forEach(t => {
             if (charge[t.date]) {
-                const duree = (t.duree_estimee || 120) + (t.temps_trajet || 0);
+                const duree = (t.duree_estimee || 120);
                 charge[t.date].heures += duree / 60;
                 charge[t.date].tournees.push(t);
                 if (t.technicien_id) charge[t.date].techniciens[t.technicien_id] = (charge[t.date].techniciens[t.technicien_id] || 0) + duree;
@@ -19483,12 +19492,7 @@ const TourneesTab = ({ equipements, user, showToast }) => {
             charge[k] = { ...v, techniciens: { ...v.techniciens }, techsDisponibles: [...v.techsDisponibles] };
         });
         
-        const sorted = [...tourneesUrgentes].sort((a, b) => {
-            if (a.statut === 'retard' && b.statut !== 'retard') return -1;
-            if (b.statut === 'retard' && a.statut !== 'retard') return 1;
-            if (a.joursRestants !== null && b.joursRestants !== null) return a.joursRestants - b.joursRestants;
-            return 0;
-        });
+        const sorted = [...tourneesUrgentes];
         
         sorted.forEach(tournee => {
             const dateIdealeCible = tournee.prochaineVisite || today;
@@ -19507,21 +19511,17 @@ const TourneesTab = ({ equipements, user, showToast }) => {
                 
                 let techOk = null, minCharge = Infinity;
                 info.techsDisponibles.forEach(tech => {
-                    const lieuDepart = getLieuDepartTechnicien(tech.id);
-                    const trajets = calculerTempsTrajet(tournee.equipements, lieuDepart);
-                    const dureeTotale = tournee.dureeEntretien + trajets.total;
                     const chargeTech = (info.techniciens[tech.id] || 0) / 60;
-                    if (chargeTech + dureeTotale / 60 <= MAX_HEURES_JOUR && chargeTech < minCharge) {
+                    if (chargeTech + tournee.dureeTotale / 60 <= MAX_HEURES_JOUR && chargeTech < minCharge) {
                         minCharge = chargeTech;
-                        techOk = { ...tech, lieuDepart, trajets, dureeTotale };
+                        techOk = tech;
                     }
                 });
                 
                 if (!techOk) return;
                 
                 const scoreTech = 100 - (minCharge / MAX_HEURES_JOUR) * 100;
-                const scoreRepart = Math.max(0, 50 - info.tournees.length * 10);
-                const scoreTotal = scoreProximite * 0.35 + scoreCharge * 0.25 + scoreTech * 0.25 + scoreRepart * 0.15;
+                const scoreTotal = scoreProximite * 0.4 + scoreCharge * 0.3 + scoreTech * 0.3;
                 
                 if (scoreTotal > meilleur.score) {
                     meilleur = { date: dateStr, score: scoreTotal, technicien: techOk };
@@ -19529,22 +19529,15 @@ const TourneesTab = ({ equipements, user, showToast }) => {
             });
             
             if (meilleur.date && meilleur.technicien) {
-                charge[meilleur.date].heures += meilleur.technicien.dureeTotale / 60;
-                charge[meilleur.date].techniciens[meilleur.technicien.id] = (charge[meilleur.date].techniciens[meilleur.technicien.id] || 0) + meilleur.technicien.dureeTotale;
-                charge[meilleur.date].tournees.push({ nom: tournee.nom });
+                charge[meilleur.date].heures += tournee.dureeTotale / 60;
+                charge[meilleur.date].techniciens[meilleur.technicien.id] = (charge[meilleur.date].techniciens[meilleur.technicien.id] || 0) + tournee.dureeTotale;
                 
-                suggs.push({
-                    tournee: { ...tournee, trajets: meilleur.technicien.trajets, dureeTotale: meilleur.technicien.dureeTotale },
-                    date: meilleur.date,
-                    technicien: meilleur.technicien,
-                    lieuDepart: meilleur.technicien.lieuDepart,
-                    score: meilleur.score
-                });
+                suggs.push({ tournee, date: meilleur.date, technicien: meilleur.technicien, score: meilleur.score });
             }
         });
         
         return suggs;
-    }, [tourneesUrgentes, getChargeParJour, getLieuDepartTechnicien, calculerTempsTrajet]);
+    }, [tourneesUrgentes, getChargeParJour]);
     
     const planifierEnLot = async (suggsAPlanifier) => {
         if (suggsAPlanifier.length === 0) return showToast('Aucune sélection', 'error');
@@ -19553,14 +19546,22 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         
         for (const sugg of suggsAPlanifier) {
             try {
-                await db.from('tournees').insert({
-                    nom: sugg.tournee.nom, secteur: sugg.tournee.secteur, ordre: sugg.tournee.ordre,
-                    date: sugg.date, heure_debut: '08:00', status: 'planifiee',
-                    duree_estimee: sugg.tournee.dureeEntretien, temps_trajet: sugg.tournee.trajets.total,
-                    technicien_id: sugg.technicien?.id, lieu_depart_id: sugg.lieuDepart?.id || null
+                const { error } = await db.from('tournees').insert({
+                    nom: sugg.tournee.nom,
+                    secteur: sugg.tournee.secteur,
+                    ordre: sugg.tournee.ordre,
+                    date: sugg.date,
+                    heure_debut: '08:00',
+                    status: 'planifiee',
+                    duree_estimee: sugg.tournee.dureeEntretien,
+                    technicien_id: sugg.technicien?.id || null
                 });
+                if (error) throw error;
                 success++;
-            } catch (err) { errors++; }
+            } catch (err) {
+                console.error('Erreur planification:', err);
+                errors++;
+            }
         }
         
         showToast(`${success} planifiée(s)${errors ? `, ${errors} erreur(s)` : ''}`, success > 0 ? 'success' : 'error');
@@ -19580,9 +19581,9 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         try {
             const [techRes, absRes, jfRes, lieuxRes] = await Promise.all([
                 db.from('profiles').select('*').in('role', ['technicien', 'admin']),
-                db.from('absences').select('*').gte('date_fin', new Date().toISOString().split('T')[0]),
-                db.from('jours_feries').select('*'),
-                db.from('lieux_depart').select('*')
+                db.from('absences').select('*').gte('date_fin', new Date().toISOString().split('T')[0]).catch(() => ({ data: [] })),
+                db.from('jours_feries').select('*').catch(() => ({ data: [] })),
+                db.from('lieux_depart').select('*').catch(() => ({ data: [] }))
             ]);
             
             setTechniciens((techRes.data || []).map((t, idx) => ({
@@ -19635,25 +19636,40 @@ const TourneesTab = ({ equipements, user, showToast }) => {
     const planifierTournee = async () => {
         if (!selectedDef || !planifierData.date) return showToast('Sélectionnez une date', 'error');
         
-        const lieuDepart = planifierData.lieu_depart_id 
-            ? lieuxDepart.find(l => l.id === planifierData.lieu_depart_id)
-            : getLieuDepartTechnicien(planifierData.technicien_id);
-        const trajets = calculerTempsTrajet(selectedDef.equipements, lieuDepart);
-        
         try {
-            await db.from('tournees').insert({
-                nom: selectedDef.nom, secteur: selectedDef.secteur, ordre: selectedDef.ordre,
-                date: planifierData.date, heure_debut: planifierData.heure_debut || '08:00', status: 'planifiee',
-                duree_estimee: selectedDef.dureeEntretien, temps_trajet: trajets.total,
-                technicien_id: planifierData.technicien_id || null, lieu_depart_id: lieuDepart?.id || null
-            });
-            showToast('Planifiée', 'success');
+            const insertData = {
+                nom: selectedDef.nom,
+                secteur: selectedDef.secteur,
+                ordre: selectedDef.ordre,
+                date: planifierData.date,
+                heure_debut: planifierData.heure_debut || '08:00',
+                status: 'planifiee',
+                duree_estimee: selectedDef.dureeEntretien
+            };
+            
+            // Ajouter technicien seulement si sélectionné
+            if (planifierData.technicien_id) {
+                insertData.technicien_id = planifierData.technicien_id;
+            }
+            
+            console.log('Insert tournée:', insertData);
+            const { error } = await db.from('tournees').insert(insertData);
+            
+            if (error) {
+                console.error('Erreur Supabase:', error);
+                throw error;
+            }
+            
+            showToast('Tournée planifiée', 'success');
             setShowPlanifier(false);
             setPlanifierData({ date: '', technicien_id: '', heure_debut: '08:00', lieu_depart_id: '' });
             setSelectedDef(null);
             await loadAllTournees();
             loadTourneesPlanifiees(selectedWeek);
-        } catch (err) { showToast('Erreur: ' + err.message, 'error'); }
+        } catch (err) {
+            console.error('Erreur complète:', err);
+            showToast('Erreur: ' + (err.message || JSON.stringify(err)), 'error');
+        }
     };
     
     const supprimerTournee = async (id) => {
@@ -19677,18 +19693,13 @@ const TourneesTab = ({ equipements, user, showToast }) => {
     };
     
     const supprimerAbsence = async (id) => {
-        try { await db.from('absences').delete().eq('id', id); showToast('Supprimée', 'info'); loadData(); } catch (err) { showToast('Erreur', 'error'); }
+        try { await db.from('absences').delete().eq('id', id); showToast('Supprimée', 'info'); loadData(); } catch (err) {}
     };
     
     const ajouterLieuDepart = async () => {
         if (!lieuForm.nom || !lieuForm.latitude || !lieuForm.longitude) return showToast('Champs requis', 'error');
         try {
-            await db.from('lieux_depart').insert({
-                ...lieuForm,
-                latitude: parseFloat(lieuForm.latitude),
-                longitude: parseFloat(lieuForm.longitude),
-                technicien_id: lieuForm.technicien_id || null
-            });
+            await db.from('lieux_depart').insert({ ...lieuForm, latitude: parseFloat(lieuForm.latitude), longitude: parseFloat(lieuForm.longitude), technicien_id: lieuForm.technicien_id || null });
             showToast('Lieu ajouté', 'success');
             setLieuForm({ nom: '', type: 'depot', adresse: '', ville: '', latitude: '', longitude: '', technicien_id: '' });
             loadData();
@@ -19696,7 +19707,7 @@ const TourneesTab = ({ equipements, user, showToast }) => {
     };
     
     const supprimerLieu = async (id) => {
-        try { await db.from('lieux_depart').delete().eq('id', id); showToast('Supprimé', 'info'); loadData(); } catch (err) { showToast('Erreur', 'error'); }
+        try { await db.from('lieux_depart').delete().eq('id', id); showToast('Supprimé', 'info'); loadData(); } catch (err) {}
     };
     
     const sauvegarderCoords = async (eq) => {
@@ -19707,32 +19718,11 @@ const TourneesTab = ({ equipements, user, showToast }) => {
             showToast('Coordonnées mises à jour', 'success');
             setShowEditCoords(null);
             setCoordsEdit({ latitude: '', longitude: '' });
-            window.location.reload();
         } catch (err) { showToast('Erreur', 'error'); }
     };
     
-    const exportPDF = (def, tournee = null) => {
-        const eqs = def.equipements;
-        const dateStr = tournee ? new Date(tournee.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : 'Non planifiée';
-        const techName = tournee?.technicien?.name || techniciens.find(t => t.id === tournee?.technicien_id)?.name || 'Non assigné';
-        const lieuDepart = tournee?.lieu_depart_id ? lieuxDepart.find(l => l.id === tournee.lieu_depart_id)?.nom : (selectedLieuDepart?.nom || 'Siège');
-        
-        const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${def.nom}</title>
-<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;padding:20px;font-size:12px}.header{display:flex;justify-content:space-between;margin-bottom:20px;padding-bottom:15px;border-bottom:2px solid #E11D48}.logo{font-size:20px;font-weight:bold;color:#E11D48}.title{font-size:18px;font-weight:bold}.info-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:20px}.info-box{background:#f5f5f5;padding:10px;border-radius:6px}.info-label{font-size:10px;color:#666}.info-value{font-weight:bold}table{width:100%;border-collapse:collapse;margin-bottom:20px}th{background:#E11D48;color:white;padding:8px;text-align:left;font-size:11px}td{padding:8px;border-bottom:1px solid #ddd}tr:nth-child(even){background:#f9f9f9}.num{width:30px;text-align:center;font-weight:bold;color:#E11D48}.check{width:50px;text-align:center}.checkbox{width:16px;height:16px;border:2px solid #999;display:inline-block}.footer{text-align:center;font-size:10px;color:#999;margin-top:20px}</style></head><body>
-<div class="header"><div><div class="logo">🛗 Auvergne Ascenseurs</div><div style="font-size:10px;color:#666">Feuille de route</div></div><div style="text-align:right"><div class="title">${def.nom}</div><div style="color:#666">${dateStr}</div></div></div>
-<div class="info-grid">
-<div class="info-box"><div class="info-label">Départ</div><div class="info-value">📍 ${lieuDepart}</div></div>
-<div class="info-box"><div class="info-label">Technicien</div><div class="info-value">👤 ${techName}</div></div>
-<div class="info-box"><div class="info-label">Équipements</div><div class="info-value">🏢 ${eqs.length}</div></div>
-<div class="info-box"><div class="info-label">Entretien</div><div class="info-value">🔧 ${Math.round(def.dureeEntretien/60*10)/10}h</div></div>
-<div class="info-box"><div class="info-label">Trajet</div><div class="info-value">🚗 ${def.trajets.total}min</div></div>
-<div class="info-box"><div class="info-label">Distance</div><div class="info-value">📏 ${def.trajets.distanceKm}km</div></div>
-</div>
-<table><thead><tr><th class="num">N°</th><th>Ascenseur</th><th>Adresse</th><th>Ville</th><th>Fréq.</th><th>Dernière</th><th class="check">✓</th><th>Obs.</th></tr></thead><tbody>
-${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-'}</strong></td><td>${eq.adresse||'-'}</td><td>${eq.ville||'-'}</td><td>${eq.nb_visites_an||6}x/an</td><td>${eq.dat_pass?new Date(eq.dat_pass).toLocaleDateString('fr-FR'):'-'}</td><td class="check"><span class="checkbox"></span></td><td></td></tr>`).join('')}
-</tbody></table>
-<div class="footer">Généré le ${new Date().toLocaleDateString('fr-FR')} - StockApp v6.0</div></body></html>`;
-        const w = window.open('', '_blank'); w.document.write(html); w.document.close(); w.onload = () => w.print();
+    const toggleSecteur = (secteur) => {
+        setExpandedSecteurs(prev => ({ ...prev, [secteur]: !prev[secteur] }));
     };
     
     // Carte
@@ -19747,7 +19737,6 @@ ${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-
                 const coords = [];
                 const lieuDepart = selectedLieuDepart || SIEGE_COORDS;
                 
-                // Marqueur départ
                 L.marker([lieuDepart.latitude, lieuDepart.longitude], {
                     icon: L.divIcon({ className: 'custom-marker', html: `<div style="background:#EF4444;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.3)">🏢</div>`, iconSize: [28, 28], iconAnchor: [14, 14] })
                 }).addTo(map).bindPopup(`<strong>Départ:</strong> ${lieuDepart.nom}`);
@@ -19755,23 +19744,20 @@ ${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-
                 
                 selectedDef.equipements.forEach((eq, idx) => {
                     const pos = getEquipementCoords(eq);
-                    const isManual = isWellGeolocated(eq);
                     L.marker(pos, {
-                        icon: L.divIcon({ className: 'custom-marker', html: `<div style="background:${isManual ? COLORS.success : COLORS.primary};color:white;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:11px;border:2px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.3)">${idx + 1}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] })
+                        icon: L.divIcon({ className: 'custom-marker', html: `<div style="background:${COLORS.primary};color:white;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:11px;border:2px solid white">${idx + 1}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] })
                     }).addTo(map).bindPopup(`<strong>${idx + 1}. ${eq.ascenseur}</strong><br/>${eq.adresse}, ${eq.ville}`);
                     coords.push(pos);
                 });
                 
-                // Retour au départ
                 coords.push([lieuDepart.latitude, lieuDepart.longitude]);
-                
                 if (coords.length > 1) L.polyline(coords, { color: COLORS.primary, weight: 3, dashArray: '8,8' }).addTo(map);
                 map.fitBounds(coords, { padding: [30, 30] });
                 mapInstanceRef.current = map;
             }, 100);
         }
         return () => { if (mapInstanceRef.current && !showMap) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; } };
-    }, [showMap, selectedDef, selectedLieuDepart, getEquipementCoords, isWellGeolocated]);
+    }, [showMap, selectedDef, selectedLieuDepart, getEquipementCoords]);
     
     // ========== UI ==========
     
@@ -19798,17 +19784,8 @@ ${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-
         h('div', { style: { display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' } },
             tourneesUrgentes.length > 0 && h('button', { className: 'btn btn-primary', onClick: () => { setSuggestions(genererSuggestions()); setSelectedSuggestions([]); setShowAutoPlan(true); } }, '🤖 Planif. auto (', tourneesUrgentes.length, ')'),
             h('button', { className: 'btn btn-ghost', onClick: () => setShowAbsences(true) }, '📅 Absences'),
-            h('button', { className: 'btn btn-ghost', onClick: () => setShowLieuxDepart(true) }, '📍 Lieux départ'),
-            h('div', { style: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 } },
-                h('span', { style: { fontSize: 12, color: COLORS.muted } }, 'Départ:'),
-                h('select', { className: 'form-select', style: { maxWidth: 180, fontSize: 12 }, value: selectedLieuDepart?.id || '', onChange: e => {
-                    const lieu = lieuxDepart.find(l => l.id === e.target.value);
-                    setSelectedLieuDepart(lieu || null);
-                }},
-                    h('option', { value: '' }, '🏢 Siège (défaut)'),
-                    lieuxDepart.map(l => h('option', { key: l.id, value: l.id }, lieuTypes[l.type]?.icon || '📍', ' ', l.nom))
-                )
-            )
+            h('button', { className: 'btn btn-ghost', onClick: () => setShowLieuxDepart(true) }, '📍 Lieux'),
+            secteursAutorises && h('span', { style: { marginLeft: 'auto', fontSize: 11, color: COLORS.muted, background: COLORS.infoPastel, padding: '4px 10px', borderRadius: 12 } }, '🔒 Secteurs: ', secteursAutorises.join(', '))
         ),
         
         h('div', { style: { ...cardStyle, padding: 0, overflow: 'hidden' } },
@@ -19822,7 +19799,7 @@ ${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-
                             h('span', { style: badge.style }, badge.icon),
                             h('div', { style: { flex: 1 } },
                                 h('div', { style: { fontWeight: 500, marginBottom: 2 } }, def.nom),
-                                h('div', { style: { fontSize: 12, color: COLORS.muted } }, def.equipements.length, ' éq. • ', Math.round(def.dureeTotale / 60 * 10) / 10, 'h (🚗', def.trajets.total, 'min • ', def.trajets.distanceKm, 'km)')
+                                h('div', { style: { fontSize: 12, color: COLORS.muted } }, def.equipements.length, ' éq. • ', Math.round(def.dureeTotale / 60 * 10) / 10, 'h')
                             ),
                             h('span', { style: { padding: '3px 8px', background: getFrequenceColor(def.visitesParAn) + '20', color: getFrequenceColor(def.visitesParAn), borderRadius: 12, fontSize: 10 } }, formatCycle(def.visitesParAn)),
                             h('button', { className: 'btn btn-sm btn-primary', onClick: e => { e.stopPropagation(); setSelectedDef(def); setShowPlanifier(true); } }, '📅')
@@ -19850,16 +19827,14 @@ ${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-
             h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } }, h('div', { style: { fontSize: 11, color: COLORS.muted } }, 'Trajet'), h('div', { style: { fontSize: 18, fontWeight: 700 } }, selectedDef.trajets.total, 'min'))
         ),
         
-        h('div', { style: { padding: 12, background: COLORS.infoPastel, borderRadius: 8, marginBottom: 16, fontSize: 12 } },
-            h('div', null, '📍 Départ: ', selectedLieuDepart?.nom || 'Siège'),
-            h('div', null, '🚗 Aller: ', selectedDef.trajets.trajetAller, 'min • Inter: ', selectedDef.trajets.trajetInter, 'min • Retour: ', selectedDef.trajets.trajetRetour, 'min'),
-            h('div', null, '📏 Distance totale: ', selectedDef.trajets.distanceKm, ' km')
+        h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 } },
+            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } }, h('div', { style: { fontSize: 11, color: COLORS.muted } }, 'Dernière visite'), h('div', { style: { fontSize: 14, fontWeight: 600 } }, selectedDef.derniereVisite?.toLocaleDateString('fr-FR') || '-')),
+            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } }, h('div', { style: { fontSize: 11, color: COLORS.muted } }, 'Prochaine (', selectedDef.cycleJours, 'j)'), h('div', { style: { fontSize: 14, fontWeight: 600, color: selectedDef.statut === 'retard' ? COLORS.danger : COLORS.text } }, selectedDef.prochaineVisite?.toLocaleDateString('fr-FR') || '-'))
         ),
         
         h('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } },
             h('button', { className: 'btn btn-primary', style: { flex: 1 }, onClick: () => setShowPlanifier(true) }, '📅 Planifier'),
-            h('button', { className: `btn ${showMap ? 'btn-primary' : 'btn-ghost'}`, onClick: () => setShowMap(!showMap) }, '🗺️'),
-            h('button', { className: 'btn btn-ghost', onClick: () => exportPDF(selectedDef) }, '📄')
+            h('button', { className: `btn ${showMap ? 'btn-primary' : 'btn-ghost'}`, onClick: () => setShowMap(!showMap) }, '🗺️')
         ),
         
         showMap && h('div', { ref: mapContainerRef, style: { height: 220, borderRadius: 8, marginBottom: 16, border: `1px solid ${COLORS.border}` } }),
@@ -19868,42 +19843,108 @@ ${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-
         h('div', { style: { maxHeight: 280, overflowY: 'auto' } },
             selectedDef.equipements.map((eq, idx) => {
                 const joursDepuis = eq.dat_pass ? Math.floor((new Date() - new Date(eq.dat_pass)) / 86400000) : null;
-                const cycle = getCycleJours(getVisitesParAn(eq));
-                const enRetard = joursDepuis !== null && joursDepuis > cycle;
-                const hasCoords = isWellGeolocated(eq);
-                
-                return h('div', { key: eq.id || eq.id_wsoucont, style: { display: 'flex', alignItems: 'center', gap: 10, padding: 10, background: COLORS.background, borderRadius: 8, marginBottom: 6 } },
+                return h('div', { key: eq.id || idx, style: { display: 'flex', alignItems: 'center', gap: 10, padding: 10, background: COLORS.background, borderRadius: 8, marginBottom: 6 } },
                     h('span', { style: { width: 24, height: 24, borderRadius: '50%', background: COLORS.primary, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, flexShrink: 0 } }, idx + 1),
                     h('div', { style: { flex: 1, minWidth: 0 } },
-                        h('div', { style: { fontWeight: 500, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, eq.ascenseur),
+                        h('div', { style: { fontWeight: 500, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, eq.ascenseur || eq.code),
                         h('div', { style: { fontSize: 11, color: COLORS.muted } }, eq.ville, ' • ', formatCycle(getVisitesParAn(eq)))
                     ),
-                    h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, opacity: hasCoords ? 1 : 0.5 }, onClick: () => { setCoordsEdit({ latitude: getEquipementCoords(eq)[0].toFixed(6), longitude: getEquipementCoords(eq)[1].toFixed(6) }); setShowEditCoords(eq); } }, hasCoords ? '✅' : '📍'),
-                    joursDepuis !== null && h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 10, background: enRetard ? COLORS.danger + '20' : COLORS.muted + '20', color: enRetard ? COLORS.danger : COLORS.muted } }, joursDepuis, 'j')
+                    joursDepuis !== null && h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 10, background: COLORS.muted + '20', color: COLORS.muted } }, joursDepuis, 'j')
                 );
             })
         )
     );
     
+    // Vue liste groupée par secteur
     const renderDefinitions = () => h('div', null,
-        h('div', { style: { display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' } },
+        h('div', { style: { display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' } },
             h('select', { className: 'form-select', style: { maxWidth: 150 }, value: filterSecteur, onChange: e => setFilterSecteur(e.target.value) }, h('option', { value: '' }, 'Tous secteurs'), secteurs.map(s => h('option', { key: s, value: s }, s))),
             h('select', { className: 'form-select', style: { maxWidth: 140 }, value: filterStatut, onChange: e => setFilterStatut(e.target.value) }, h('option', { value: '' }, 'Tous statuts'), h('option', { value: 'retard' }, '🔴 Retard'), h('option', { value: 'aplanifier' }, '🟠 À planifier'), h('option', { value: 'ok' }, '✅ OK'), h('option', { value: 'jamais' }, '❓ Jamais')),
             h('select', { className: 'form-select', style: { maxWidth: 130 }, value: filterFrequence, onChange: e => setFilterFrequence(e.target.value) }, h('option', { value: '' }, 'Toutes fréq.'), frequences.map(f => h('option', { key: f, value: f }, formatCycle(f)))),
-            h('span', { style: { marginLeft: 'auto', color: COLORS.muted, fontSize: 13 } }, tourneesDefFiltered.length, ' tournée(s)')
+            h('span', { style: { marginLeft: 'auto', color: COLORS.muted, fontSize: 13 } }, stats.secteurs, ' secteur(s) • ', tourneesDefFiltered.length, ' tournée(s)'),
+            h('button', { className: 'btn btn-sm btn-ghost', onClick: () => setExpandedSecteurs(tourneesParSecteur.reduce((acc, s) => ({ ...acc, [s.secteur]: true }), {})) }, '▼ Tout'),
+            h('button', { className: 'btn btn-sm btn-ghost', onClick: () => setExpandedSecteurs({}) }, '▲ Rien')
         ),
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 } },
-            tourneesDefFiltered.map(def => {
-                const badge = getStatutBadge(def.statut, def.joursRestants);
-                return h('div', { key: def.id, style: { ...cardStyle, cursor: 'pointer', borderLeft: `4px solid ${getSecteurColor(def.secteur)}` }, onClick: () => setSelectedDef(def) },
-                    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 8 } },
-                        h('div', null, h('div', { style: { fontWeight: 600, fontSize: 14 } }, def.nom), h('div', { style: { fontSize: 12, color: COLORS.muted } }, def.equipements.length, ' éq. • ', Math.round(def.dureeTotale / 60 * 10) / 10, 'h')),
-                        h('div', { style: { display: 'flex', gap: 6 } }, h('span', { style: { padding: '3px 8px', background: getFrequenceColor(def.visitesParAn) + '20', color: getFrequenceColor(def.visitesParAn), borderRadius: 12, fontSize: 10 } }, formatCycle(def.visitesParAn)), h('span', { style: badge.style }, badge.icon))
+        
+        // Liste groupée par secteur
+        h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
+            tourneesParSecteur.filter(g => !filterSecteur || g.secteur === filterSecteur).map(group => {
+                const tourneesGroupe = group.tournees.filter(t => 
+                    (!filterStatut || t.statut === filterStatut) && 
+                    (!filterFrequence || t.visitesParAn === parseInt(filterFrequence))
+                );
+                if (tourneesGroupe.length === 0) return null;
+                
+                const isExpanded = expandedSecteurs[group.secteur];
+                const secteurColor = getSecteurColor(group.secteur);
+                
+                return h('div', { key: group.secteur, style: { ...cardStyle, padding: 0, overflow: 'hidden' } },
+                    // Header du secteur (cliquable)
+                    h('div', { 
+                        style: { 
+                            padding: '14px 16px', 
+                            background: secteurColor + '10', 
+                            borderLeft: `4px solid ${secteurColor}`,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between'
+                        },
+                        onClick: () => toggleSecteur(group.secteur)
+                    },
+                        h('div', { style: { display: 'flex', alignItems: 'center', gap: 12 } },
+                            h('span', { style: { fontSize: 16 } }, isExpanded ? '▼' : '▶'),
+                            h('div', null,
+                                h('div', { style: { fontWeight: 600, color: secteurColor } }, '📍 ', group.secteur),
+                                h('div', { style: { fontSize: 12, color: COLORS.muted } }, 
+                                    tourneesGroupe.length, ' tournée(s) • ',
+                                    tourneesGroupe.reduce((s, t) => s + t.equipements.length, 0), ' équipements'
+                                )
+                            )
+                        ),
+                        h('div', { style: { display: 'flex', gap: 6 } },
+                            group.stats.retard > 0 && h('span', { style: { padding: '2px 8px', background: COLORS.danger + '20', color: COLORS.danger, borderRadius: 10, fontSize: 11 } }, group.stats.retard, ' 🔴'),
+                            group.stats.aplanifier > 0 && h('span', { style: { padding: '2px 8px', background: COLORS.warning + '20', color: COLORS.warning, borderRadius: 10, fontSize: 11 } }, group.stats.aplanifier, ' 🟠'),
+                            group.stats.ok > 0 && h('span', { style: { padding: '2px 8px', background: COLORS.success + '20', color: COLORS.success, borderRadius: 10, fontSize: 11 } }, group.stats.ok, ' ✅')
+                        )
                     ),
-                    h('div', { style: { fontSize: 11, color: COLORS.muted } }, def.derniereVisite ? `Dern: ${def.derniereVisite.toLocaleDateString('fr-FR')}` : 'Jamais')
+                    
+                    // Liste des tournées (si expanded)
+                    isExpanded && h('div', null,
+                        tourneesGroupe.sort((a, b) => (a.ordre || 0) - (b.ordre || 0)).map(def => {
+                            const badge = getStatutBadge(def.statut, def.joursRestants);
+                            return h('div', { 
+                                key: def.id, 
+                                style: { 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    gap: 12, 
+                                    padding: '10px 16px', 
+                                    borderBottom: `1px solid ${COLORS.border}`,
+                                    cursor: 'pointer',
+                                    background: selectedDef?.id === def.id ? COLORS.primaryPastel : 'transparent'
+                                },
+                                onClick: () => setSelectedDef(def)
+                            },
+                                h('span', { style: { width: 32, height: 32, borderRadius: 8, background: secteurColor + '20', color: secteurColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 14 } }, def.ordre),
+                                h('div', { style: { flex: 1 } },
+                                    h('div', { style: { fontWeight: 500, fontSize: 13 } }, 'Tournée ', def.ordre),
+                                    h('div', { style: { fontSize: 11, color: COLORS.muted } }, 
+                                        def.equipements.length, ' éq. • ',
+                                        Math.round(def.dureeTotale / 60 * 10) / 10, 'h • ',
+                                        def.derniereVisite ? `Dern: ${def.derniereVisite.toLocaleDateString('fr-FR')}` : 'Jamais'
+                                    )
+                                ),
+                                h('span', { style: { padding: '3px 8px', background: getFrequenceColor(def.visitesParAn) + '20', color: getFrequenceColor(def.visitesParAn), borderRadius: 12, fontSize: 10 } }, formatCycle(def.visitesParAn)),
+                                h('span', { style: badge.style }, badge.icon),
+                                h('button', { className: 'btn btn-sm btn-ghost', onClick: e => { e.stopPropagation(); setSelectedDef(def); setShowPlanifier(true); } }, '📅')
+                            );
+                        })
+                    )
                 );
             })
         ),
+        
         selectedDef && !showPlanifier && renderDetailPanel()
     );
     
@@ -19921,7 +19962,7 @@ ${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-
                 const indispo = getIndisponibiliteRaison(date);
                 const techsDispo = indispo ? [] : getTechniciensDisponibles(date);
                 
-                return h('div', { key: idx, style: { ...cardStyle, minHeight: 280, background: indispo ? (indispo.type === 'ferie' ? '#FEF3C7' : COLORS.background) : isToday ? COLORS.primaryPastel : COLORS.card, borderColor: isToday ? COLORS.primary : COLORS.border, opacity: indispo ? 0.8 : 1 } },
+                return h('div', { key: idx, style: { ...cardStyle, minHeight: 280, background: indispo ? (indispo.type === 'ferie' ? '#FEF3C7' : COLORS.background) : isToday ? COLORS.primaryPastel : COLORS.card, opacity: indispo ? 0.8 : 1 } },
                     h('div', { style: { textAlign: 'center', paddingBottom: 10, marginBottom: 10, borderBottom: `1px solid ${COLORS.border}` } },
                         h('div', { style: { fontWeight: 600, color: isToday ? COLORS.primary : COLORS.text } }, joursComplets[date.getDay()]),
                         h('div', { style: { fontSize: 12, color: COLORS.muted } }, date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })),
@@ -19936,52 +19977,50 @@ ${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-
                                 const tech = techniciens.find(x => x.id === t.technicien_id);
                                 return h('div', { key: t.id, onClick: () => setSelectedTournee(t), style: { padding: 10, background: (tech?.couleur || COLORS.primary) + '15', borderLeft: `4px solid ${tech?.couleur || COLORS.primary}`, borderRadius: 8, marginBottom: 8, cursor: 'pointer' } },
                                     h('div', { style: { fontWeight: 500, fontSize: 13, marginBottom: 4 } }, t.nom),
-                                    h('div', { style: { fontSize: 11, color: COLORS.muted } }, '👤 ', tech?.name || '-'),
-                                    h('div', { style: { fontSize: 11, color: COLORS.muted } }, '🕐 ', t.heure_debut || '08:00', ' • ', Math.round((t.duree_estimee + (t.temps_trajet || 0)) / 60 * 10) / 10, 'h')
+                                    h('div', { style: { fontSize: 11, color: COLORS.muted } }, '👤 ', tech?.name || 'Non assigné'),
+                                    h('div', { style: { fontSize: 11, color: COLORS.muted } }, '🕐 ', t.heure_debut || '08:00', ' • ', Math.round((t.duree_estimee || 0) / 60 * 10) / 10, 'h')
                                 );
                             })
                 );
             })
         ),
-        selectedTournee && h('div', { style: { position: 'fixed', right: 0, top: 0, bottom: 0, width: 400, background: COLORS.card, boxShadow: '-4px 0 20px rgba(0,0,0,0.15)', padding: 20, overflowY: 'auto', zIndex: 100 } },
-            h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 16 } }, h('h3', { style: { fontSize: 16 } }, selectedTournee.nom), h('button', { onClick: () => setSelectedTournee(null), style: { background: 'none', border: 'none', fontSize: 20, cursor: 'pointer' } }, '×')),
+        selectedTournee && h('div', { style: { position: 'fixed', right: 0, top: 0, bottom: 0, width: 400, background: COLORS.card, boxShadow: '-4px 0 20px rgba(0,0,0,0.15)', padding: 20, zIndex: 100 } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 16 } }, h('h3', null, selectedTournee.nom), h('button', { onClick: () => setSelectedTournee(null), style: { background: 'none', border: 'none', fontSize: 20, cursor: 'pointer' } }, '×')),
             h('div', { style: { ...cardStyle, background: COLORS.background, marginBottom: 16 } },
-                h('div', { style: { marginBottom: 8 } }, h('span', { style: { fontSize: 11, color: COLORS.muted } }, 'Date: '), h('strong', null, new Date(selectedTournee.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))),
-                h('div', { style: { marginBottom: 8 } }, h('span', { style: { fontSize: 11, color: COLORS.muted } }, 'Technicien: '), h('strong', null, techniciens.find(t => t.id === selectedTournee.technicien_id)?.name || '-')),
-                h('div', null, h('span', { style: { fontSize: 11, color: COLORS.muted } }, 'Durée: '), h('strong', null, Math.round((selectedTournee.duree_estimee + (selectedTournee.temps_trajet || 0)) / 60 * 10) / 10, 'h'))
+                h('p', null, '📅 ', new Date(selectedTournee.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })),
+                h('p', null, '👤 ', techniciens.find(t => t.id === selectedTournee.technicien_id)?.name || 'Non assigné'),
+                h('p', null, '⏱️ ', Math.round((selectedTournee.duree_estimee || 0) / 60 * 10) / 10, 'h')
             ),
             h('div', { style: { display: 'flex', gap: 8 } },
-                h('button', { className: 'btn btn-ghost', style: { flex: 1 }, onClick: () => { const def = tourneesDef.find(d => d.secteur === selectedTournee.secteur && d.ordre === selectedTournee.ordre); if (def) exportPDF(def, selectedTournee); } }, '📄 Feuille'),
-                h('button', { className: 'btn', style: { background: COLORS.danger, color: 'white' }, onClick: () => { if (confirm('Supprimer ?')) supprimerTournee(selectedTournee.id); } }, '🗑️')
+                h('button', { className: 'btn btn-danger', onClick: () => { if (confirm('Supprimer ?')) supprimerTournee(selectedTournee.id); } }, '🗑️ Supprimer')
             )
         )
     );
     
     const renderTechniciens = () => h('div', null,
-        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 } },
-            h('div', null, h('h3', { style: { fontSize: 16, marginBottom: 4 } }, '👷 Techniciens'), h('p', { style: { fontSize: 12, color: COLORS.muted } }, 'Charge et absences')),
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 20 } },
+            h('h3', null, '👷 Techniciens'),
             h('div', { style: { display: 'flex', gap: 8 } }, h('button', { className: 'btn btn-ghost', onClick: () => setShowAbsences(true) }, '📅 Absences'), h('button', { className: 'btn btn-ghost', onClick: () => setShowLieuxDepart(true) }, '📍 Lieux'))
         ),
         techniciens.length === 0
-            ? h('div', { style: { ...cardStyle, textAlign: 'center', padding: 40 } }, '👷 Aucun technicien')
-            : h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 } },
+            ? h('div', { style: { ...cardStyle, textAlign: 'center', padding: 40 } }, 'Aucun technicien')
+            : h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 } },
                 techniciens.map(tech => {
                     const tourneesTech = tourneesPlanifiees.filter(t => t.technicien_id === tech.id);
                     const absencesTech = absences.filter(a => a.technicien_id === tech.id);
-                    const lieuDepart = getLieuDepartTechnicien(tech.id);
-                    const heures = tourneesTech.reduce((s, t) => s + (t.duree_estimee + (t.temps_trajet || 0)) / 60, 0);
+                    const heures = tourneesTech.reduce((s, t) => s + (t.duree_estimee || 0) / 60, 0);
                     const charge = Math.min(100, (heures / 35) * 100);
                     
                     return h('div', { key: tech.id, style: { ...cardStyle, borderTop: `4px solid ${tech.couleur}` } },
                         h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 } },
                             h('div', { style: { width: 40, height: 40, borderRadius: '50%', background: tech.couleur + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 } }, '👷'),
-                            h('div', { style: { flex: 1 } }, h('div', { style: { fontWeight: 600 } }, tech.name), h('div', { style: { fontSize: 11, color: COLORS.muted } }, '📍 ', lieuDepart.nom))
+                            h('div', null, h('div', { style: { fontWeight: 600 } }, tech.name), h('div', { style: { fontSize: 11, color: COLORS.muted } }, tourneesTech.length, ' tournée(s) cette sem.'))
                         ),
                         h('div', { style: { marginBottom: 12 } },
-                            h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 } }, h('span', null, 'Charge sem.'), h('span', null, heures.toFixed(1), 'h / 35h')),
+                            h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 } }, h('span', null, 'Charge'), h('span', null, heures.toFixed(1), 'h / 35h')),
                             h('div', { style: { height: 6, background: COLORS.background, borderRadius: 3 } }, h('div', { style: { height: '100%', width: `${charge}%`, background: charge > 90 ? COLORS.danger : charge > 70 ? COLORS.warning : COLORS.success, borderRadius: 3 } }))
                         ),
-                        absencesTech.length > 0 && h('div', { style: { fontSize: 11, marginBottom: 8 } },
+                        absencesTech.length > 0 && h('div', { style: { fontSize: 11 } },
                             h('div', { style: { fontWeight: 500, marginBottom: 4 } }, '📅 Absences'),
                             absencesTech.slice(0, 2).map(a => h('div', { key: a.id, style: { padding: 4, background: absenceTypes[a.type]?.color + '15', borderRadius: 4, marginBottom: 2 } }, absenceTypes[a.type]?.icon, ' ', new Date(a.date_debut).toLocaleDateString('fr-FR'), ' → ', new Date(a.date_fin).toLocaleDateString('fr-FR')))
                         )
@@ -19994,7 +20033,6 @@ ${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-
     const renderModalPlanifier = () => showPlanifier && selectedDef && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 } },
         h('div', { style: { background: COLORS.card, borderRadius: 16, padding: 24, width: 460, maxWidth: '95%' } },
             h('h3', { style: { marginBottom: 16 } }, '📅 Planifier ', selectedDef.nom),
-            
             h('div', { style: { marginBottom: 12 } },
                 h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Date *'),
                 h('input', { type: 'date', className: 'form-control', value: planifierData.date, onChange: e => setPlanifierData({ ...planifierData, date: e.target.value }) }),
@@ -20015,28 +20053,15 @@ ${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-
                     })
                 )
             ),
-            h('div', { style: { marginBottom: 12 } },
-                h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Lieu de départ'),
-                h('select', { className: 'form-select', value: planifierData.lieu_depart_id, onChange: e => setPlanifierData({ ...planifierData, lieu_depart_id: e.target.value }) },
-                    h('option', { value: '' }, '🏢 Par défaut (', getLieuDepartTechnicien(planifierData.technicien_id).nom, ')'),
-                    lieuxDepart.map(l => h('option', { key: l.id, value: l.id }, lieuTypes[l.type]?.icon, ' ', l.nom))
-                )
-            ),
             h('div', { style: { marginBottom: 16 } },
                 h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Heure'),
                 h('input', { type: 'time', className: 'form-control', value: planifierData.heure_debut, onChange: e => setPlanifierData({ ...planifierData, heure_debut: e.target.value }) })
             ),
-            
-            (() => {
-                const lieu = planifierData.lieu_depart_id ? lieuxDepart.find(l => l.id === planifierData.lieu_depart_id) : getLieuDepartTechnicien(planifierData.technicien_id);
-                const trajets = calculerTempsTrajet(selectedDef.equipements, lieu);
-                return h('div', { style: { padding: 12, background: COLORS.infoPastel, borderRadius: 8, marginBottom: 16, fontSize: 12 } },
-                    h('div', null, '📍 Départ: ', lieu?.nom || 'Siège'),
-                    h('div', null, '🚗 Trajet: ', trajets.total, 'min (', trajets.distanceKm, 'km)'),
-                    h('div', null, '⏱️ Durée totale: ', Math.round((selectedDef.dureeEntretien + trajets.total) / 60 * 10) / 10, 'h')
-                );
-            })(),
-            
+            h('div', { style: { padding: 12, background: COLORS.infoPastel, borderRadius: 8, marginBottom: 16, fontSize: 12 } },
+                h('div', null, '🏢 ', selectedDef.equipements.length, ' équipements'),
+                h('div', null, '⏱️ Durée: ', Math.round(selectedDef.dureeTotale / 60 * 10) / 10, 'h'),
+                h('div', null, '🔄 Fréquence: ', formatCycle(selectedDef.visitesParAn))
+            ),
             h('div', { style: { display: 'flex', gap: 8 } },
                 h('button', { className: 'btn btn-ghost', style: { flex: 1 }, onClick: () => { setShowPlanifier(false); setPlanifierData({ date: '', technicien_id: '', heure_debut: '08:00', lieu_depart_id: '' }); } }, 'Annuler'),
                 h('button', { className: 'btn btn-primary', style: { flex: 1 }, onClick: planifierTournee }, 'Planifier')
@@ -20045,15 +20070,10 @@ ${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-
     );
     
     const renderModalAutoPlan = () => showAutoPlan && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 } },
-        h('div', { style: { background: COLORS.card, borderRadius: 16, padding: 24, width: 750, maxWidth: '95%', maxHeight: '90vh', overflowY: 'auto' } },
-            h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 16 } }, h('h3', null, '🤖 Planification Intelligente'), h('button', { onClick: () => setShowAutoPlan(false), style: { background: 'none', border: 'none', fontSize: 20, cursor: 'pointer' } }, '×')),
-            h('div', { style: { padding: 12, background: COLORS.infoPastel, borderRadius: 8, marginBottom: 16, fontSize: 12 } },
-                h('div', null, '📅 Exclusion: week-ends, ', joursFeries.length, ' jours fériés, absences'),
-                h('div', null, '📍 Lieu de départ personnalisé par technicien'),
-                h('div', null, '🚗 Temps de trajet inclus (aller + inter + retour)')
-            ),
+        h('div', { style: { background: COLORS.card, borderRadius: 16, padding: 24, width: 700, maxWidth: '95%', maxHeight: '90vh', overflowY: 'auto' } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 16 } }, h('h3', null, '🤖 Planification Auto'), h('button', { onClick: () => setShowAutoPlan(false), style: { background: 'none', border: 'none', fontSize: 20, cursor: 'pointer' } }, '×')),
             suggestions.length === 0
-                ? h('div', { style: { textAlign: 'center', padding: 40 } }, '✅ Aucune tournée à planifier')
+                ? h('div', { style: { textAlign: 'center', padding: 40 } }, '✅ Aucune suggestion')
                 : h('div', null,
                     h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 12 } },
                         h('label', { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 } }, h('input', { type: 'checkbox', checked: selectedSuggestions.length === suggestions.length, onChange: e => setSelectedSuggestions(e.target.checked ? suggestions.map((_, i) => i) : []) }), 'Tout (', selectedSuggestions.length, '/', suggestions.length, ')'),
@@ -20068,7 +20088,7 @@ ${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-
                                 h('input', { type: 'checkbox', checked: sel, onChange: () => {} }),
                                 h('div', { style: { flex: 1 } },
                                     h('div', { style: { fontWeight: 500, marginBottom: 4 } }, sugg.tournee.nom),
-                                    h('div', { style: { fontSize: 12, color: COLORS.muted } }, sugg.tournee.equipements.length, ' éq. • ', Math.round(sugg.tournee.dureeTotale / 60 * 10) / 10, 'h • 📍', sugg.lieuDepart?.nom || 'Siège')
+                                    h('div', { style: { fontSize: 12, color: COLORS.muted } }, sugg.tournee.equipements.length, ' éq. • ', Math.round(sugg.tournee.dureeTotale / 60 * 10) / 10, 'h')
                                 ),
                                 h('div', { style: { textAlign: 'right' } },
                                     h('div', { style: { fontWeight: 600, color: COLORS.primary } }, joursComplets[dateObj.getDay()], ' ', dateObj.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })),
@@ -20092,7 +20112,7 @@ ${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-
             h('div', { style: { ...cardStyle, marginBottom: 16 } },
                 h('div', { style: { fontWeight: 500, marginBottom: 12 } }, '➕ Nouvelle'),
                 h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 } },
-                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Technicien'), h('select', { className: 'form-select', value: absenceForm.technicien_id, onChange: e => setAbsenceForm({ ...absenceForm, technicien_id: e.target.value }) }, h('option', { value: '' }, 'Sélectionner...'), techniciens.map(t => h('option', { key: t.id, value: t.id }, t.name)))),
+                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Technicien'), h('select', { className: 'form-select', value: absenceForm.technicien_id, onChange: e => setAbsenceForm({ ...absenceForm, technicien_id: e.target.value }) }, h('option', { value: '' }, 'Choisir...'), techniciens.map(t => h('option', { key: t.id, value: t.id }, t.name)))),
                     h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Type'), h('select', { className: 'form-select', value: absenceForm.type, onChange: e => setAbsenceForm({ ...absenceForm, type: e.target.value }) }, Object.entries(absenceTypes).map(([k, v]) => h('option', { key: k, value: k }, v.icon, ' ', v.label)))),
                     h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Du'), h('input', { type: 'date', className: 'form-control', value: absenceForm.date_debut, onChange: e => setAbsenceForm({ ...absenceForm, date_debut: e.target.value }) })),
                     h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Au'), h('input', { type: 'date', className: 'form-control', value: absenceForm.date_fin, onChange: e => setAbsenceForm({ ...absenceForm, date_fin: e.target.value }) }))
@@ -20100,8 +20120,7 @@ ${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-
                 h('button', { className: 'btn btn-primary', style: { marginTop: 12 }, onClick: ajouterAbsence }, '➕ Ajouter')
             ),
             h('div', { style: { fontWeight: 500, marginBottom: 8 } }, '📋 Liste (', absences.length, ')'),
-            absences.length === 0
-                ? h('div', { style: { textAlign: 'center', color: COLORS.muted, padding: 20 } }, 'Aucune')
+            absences.length === 0 ? h('div', { style: { textAlign: 'center', color: COLORS.muted, padding: 20 } }, 'Aucune')
                 : h('div', { style: { maxHeight: 300, overflowY: 'auto' } },
                     absences.map(a => h('div', { key: a.id, style: { display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: COLORS.background, borderRadius: 8, marginBottom: 8, borderLeft: `4px solid ${absenceTypes[a.type]?.color}` } },
                         h('span', { style: { fontSize: 20 } }, absenceTypes[a.type]?.icon),
@@ -20112,64 +20131,29 @@ ${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-
         )
     );
     
-    const renderModalLieuxDepart = () => showLieuxDepart && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 } },
-        h('div', { style: { background: COLORS.card, borderRadius: 16, padding: 24, width: 650, maxWidth: '95%', maxHeight: '90vh', overflowY: 'auto' } },
+    const renderModalLieux = () => showLieuxDepart && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 } },
+        h('div', { style: { background: COLORS.card, borderRadius: 16, padding: 24, width: 600, maxWidth: '95%', maxHeight: '90vh', overflowY: 'auto' } },
             h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 16 } }, h('h3', null, '📍 Lieux de départ'), h('button', { onClick: () => setShowLieuxDepart(false), style: { background: 'none', border: 'none', fontSize: 20, cursor: 'pointer' } }, '×')),
-            
-            h('div', { style: { padding: 12, background: COLORS.infoPastel, borderRadius: 8, marginBottom: 16, fontSize: 12 } },
-                h('div', null, '💡 Le lieu de départ permet de calculer le temps de trajet réel'),
-                h('div', null, '🏠 Chaque technicien peut avoir son lieu de départ personnalisé'),
-                h('div', null, '🏢 Par défaut: siège de l\'entreprise')
-            ),
-            
             h('div', { style: { ...cardStyle, marginBottom: 16 } },
-                h('div', { style: { fontWeight: 500, marginBottom: 12 } }, '➕ Nouveau lieu'),
+                h('div', { style: { fontWeight: 500, marginBottom: 12 } }, '➕ Nouveau'),
                 h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 } },
-                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Nom *'), h('input', { type: 'text', className: 'form-control', placeholder: 'Ex: Domicile Jean', value: lieuForm.nom, onChange: e => setLieuForm({ ...lieuForm, nom: e.target.value }) })),
+                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Nom *'), h('input', { type: 'text', className: 'form-control', value: lieuForm.nom, onChange: e => setLieuForm({ ...lieuForm, nom: e.target.value }) })),
                     h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Type'), h('select', { className: 'form-select', value: lieuForm.type, onChange: e => setLieuForm({ ...lieuForm, type: e.target.value }) }, Object.entries(lieuTypes).map(([k, v]) => h('option', { key: k, value: k }, v.icon, ' ', v.label)))),
-                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Adresse'), h('input', { type: 'text', className: 'form-control', placeholder: 'Optionnel', value: lieuForm.adresse, onChange: e => setLieuForm({ ...lieuForm, adresse: e.target.value }) })),
-                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Ville'), h('input', { type: 'text', className: 'form-control', placeholder: 'Optionnel', value: lieuForm.ville, onChange: e => setLieuForm({ ...lieuForm, ville: e.target.value }) })),
-                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Latitude *'), h('input', { type: 'text', className: 'form-control', placeholder: 'Ex: 45.7772', value: lieuForm.latitude, onChange: e => setLieuForm({ ...lieuForm, latitude: e.target.value }) })),
-                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Longitude *'), h('input', { type: 'text', className: 'form-control', placeholder: 'Ex: 3.0870', value: lieuForm.longitude, onChange: e => setLieuForm({ ...lieuForm, longitude: e.target.value }) })),
-                    h('div', { style: { gridColumn: 'span 2' } }, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Technicien associé'), h('select', { className: 'form-select', value: lieuForm.technicien_id, onChange: e => setLieuForm({ ...lieuForm, technicien_id: e.target.value }) }, h('option', { value: '' }, '🏢 Lieu commun (tous)'), techniciens.map(t => h('option', { key: t.id, value: t.id }, '👤 ', t.name))))
+                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Latitude *'), h('input', { type: 'text', className: 'form-control', placeholder: '45.7772', value: lieuForm.latitude, onChange: e => setLieuForm({ ...lieuForm, latitude: e.target.value }) })),
+                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Longitude *'), h('input', { type: 'text', className: 'form-control', placeholder: '3.0870', value: lieuForm.longitude, onChange: e => setLieuForm({ ...lieuForm, longitude: e.target.value }) })),
+                    h('div', { style: { gridColumn: 'span 2' } }, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Technicien'), h('select', { className: 'form-select', value: lieuForm.technicien_id, onChange: e => setLieuForm({ ...lieuForm, technicien_id: e.target.value }) }, h('option', { value: '' }, '🏢 Commun'), techniciens.map(t => h('option', { key: t.id, value: t.id }, '👤 ', t.name))))
                 ),
-                h('div', { style: { fontSize: 11, color: COLORS.muted, marginTop: 8 } }, '💡 Trouvez les coordonnées sur Google Maps (clic droit → "Qu\'est-ce qu\'il y a ici ?")'),
                 h('button', { className: 'btn btn-primary', style: { marginTop: 12 }, onClick: ajouterLieuDepart }, '➕ Ajouter')
             ),
-            
             h('div', { style: { fontWeight: 500, marginBottom: 8 } }, '📋 Lieux (', lieuxDepart.length, ')'),
-            lieuxDepart.length === 0
-                ? h('div', { style: { textAlign: 'center', color: COLORS.muted, padding: 20 } }, 'Aucun lieu configuré')
+            lieuxDepart.length === 0 ? h('div', { style: { textAlign: 'center', color: COLORS.muted, padding: 20 } }, 'Aucun')
                 : h('div', { style: { maxHeight: 300, overflowY: 'auto' } },
-                    lieuxDepart.map(l => {
-                        const tech = l.technicien_id ? techniciens.find(t => t.id === l.technicien_id) : null;
-                        return h('div', { key: l.id, style: { display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: COLORS.background, borderRadius: 8, marginBottom: 8 } },
-                            h('span', { style: { fontSize: 20 } }, lieuTypes[l.type]?.icon || '📍'),
-                            h('div', { style: { flex: 1 } },
-                                h('div', { style: { fontWeight: 500 } }, l.nom, l.is_default && h('span', { style: { fontSize: 10, background: COLORS.success + '20', color: COLORS.success, padding: '2px 6px', borderRadius: 10, marginLeft: 8 } }, 'Défaut')),
-                                h('div', { style: { fontSize: 12, color: COLORS.muted } }, tech ? `👤 ${tech.name}` : '🏢 Commun', ' • ', l.ville || `${l.latitude}, ${l.longitude}`)
-                            ),
-                            !l.is_default && h('button', { className: 'btn btn-sm', style: { background: COLORS.danger + '20', color: COLORS.danger }, onClick: () => supprimerLieu(l.id) }, '🗑️')
-                        );
-                    })
+                    lieuxDepart.map(l => h('div', { key: l.id, style: { display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: COLORS.background, borderRadius: 8, marginBottom: 8 } },
+                        h('span', { style: { fontSize: 20 } }, lieuTypes[l.type]?.icon),
+                        h('div', { style: { flex: 1 } }, h('div', { style: { fontWeight: 500 } }, l.nom), h('div', { style: { fontSize: 12, color: COLORS.muted } }, l.technicien_id ? '👤 ' + (techniciens.find(t => t.id === l.technicien_id)?.name || '-') : '🏢 Commun', ' • ', l.latitude?.toFixed(4), ', ', l.longitude?.toFixed(4))),
+                        !l.is_default && h('button', { className: 'btn btn-sm', style: { background: COLORS.danger + '20', color: COLORS.danger }, onClick: () => supprimerLieu(l.id) }, '🗑️')
+                    ))
                 )
-        )
-    );
-    
-    const renderModalEditCoords = () => showEditCoords && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300 } },
-        h('div', { style: { background: COLORS.card, borderRadius: 16, padding: 24, width: 400, maxWidth: '95%' } },
-            h('h3', { style: { marginBottom: 16 } }, '📍 Modifier géolocalisation'),
-            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8, marginBottom: 16 } },
-                h('div', { style: { fontWeight: 500 } }, showEditCoords.ascenseur),
-                h('div', { style: { fontSize: 12, color: COLORS.muted } }, showEditCoords.adresse, ', ', showEditCoords.ville)
-            ),
-            h('div', { style: { marginBottom: 12 } }, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Latitude'), h('input', { type: 'text', className: 'form-control', value: coordsEdit.latitude, onChange: e => setCoordsEdit({ ...coordsEdit, latitude: e.target.value }) })),
-            h('div', { style: { marginBottom: 16 } }, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Longitude'), h('input', { type: 'text', className: 'form-control', value: coordsEdit.longitude, onChange: e => setCoordsEdit({ ...coordsEdit, longitude: e.target.value }) })),
-            h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 16 } }, '💡 Google Maps: clic droit → "Qu\'est-ce qu\'il y a ici ?"'),
-            h('div', { style: { display: 'flex', gap: 8 } },
-                h('button', { className: 'btn btn-ghost', style: { flex: 1 }, onClick: () => { setShowEditCoords(null); setCoordsEdit({ latitude: '', longitude: '' }); } }, 'Annuler'),
-                h('button', { className: 'btn btn-primary', style: { flex: 1 }, onClick: () => sauvegarderCoords(showEditCoords) }, '💾 Enregistrer')
-            )
         )
     );
     
@@ -20180,12 +20164,20 @@ ${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-
         h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 } },
             h('div', null,
                 h('h2', { style: { fontSize: 18, fontWeight: 600, marginBottom: 4 } }, '🚗 Gestion des Tournées'),
-                h('p', { style: { fontSize: 12, color: COLORS.muted } }, tourneesDef.length, ' tournées • ', stats.retard + stats.aplanifier, ' à planifier • ', joursFeries.length, ' jours fériés')
+                h('p', { style: { fontSize: 12, color: COLORS.muted } }, 
+                    stats.secteurs, ' secteur(s) • ', stats.total, ' tournées • ', stats.retard + stats.aplanifier, ' à planifier',
+                    secteursAutorises && ` • 🔒 Accès limité`
+                )
             )
         ),
         
         h('div', { style: { display: 'flex', gap: 4, marginBottom: 20, flexWrap: 'wrap' } },
-            [{ id: 'aplanifier', label: '⚠️ À planifier', count: stats.retard + stats.aplanifier + stats.jamais }, { id: 'planning', label: '📅 Planning', count: tourneesPlanifiees.length }, { id: 'definitions', label: '📋 Toutes', count: tourneesDef.length }, { id: 'techniciens', label: '👷 Techniciens', count: techniciens.length }].map(tab =>
+            [
+                { id: 'aplanifier', label: '⚠️ À planifier', count: stats.retard + stats.aplanifier + stats.jamais },
+                { id: 'planning', label: '📅 Planning', count: tourneesPlanifiees.length },
+                { id: 'definitions', label: '📋 Toutes', count: stats.total },
+                { id: 'techniciens', label: '👷 Techniciens', count: techniciens.length }
+            ].map(tab =>
                 h('button', { key: tab.id, className: `btn ${activeView === tab.id ? 'btn-primary' : 'btn-ghost'}`, onClick: () => { setActiveView(tab.id); setSelectedDef(null); setSelectedTournee(null); } },
                     tab.label,
                     h('span', { style: { marginLeft: 6, background: activeView === tab.id ? 'rgba(255,255,255,0.2)' : tab.id === 'aplanifier' && tab.count > 0 ? COLORS.danger + '30' : COLORS.background, padding: '2px 8px', borderRadius: 10, fontSize: 11, color: tab.id === 'aplanifier' && tab.count > 0 && activeView !== tab.id ? COLORS.danger : 'inherit' } }, tab.count)
@@ -20201,8 +20193,7 @@ ${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-
         renderModalPlanifier(),
         renderModalAutoPlan(),
         renderModalAbsences(),
-        renderModalLieuxDepart(),
-        renderModalEditCoords()
+        renderModalLieux()
     );
 };
 
@@ -50176,6 +50167,17 @@ const VehicleService = {
         return vehicles;
     },
 
+    // Version synchrone pour l'affichage (utilise localStorage uniquement)
+    getVehicleStockSync(vehicleId) {
+        if (!vehicleId) return [];
+        const key = `stockapp-vehicle-stock-${vehicleId}`;
+        try {
+            return JSON.parse(localStorage.getItem(key) || '[]');
+        } catch {
+            return [];
+        }
+    },
+
     async getVehicleStock(vehicleId) {
         if (this.useSupabase() && !vehicleId.startsWith('vehicle_')) {
             try {
@@ -50733,7 +50735,7 @@ const VehiclesPage = ({ data, user, refresh, showToast }) => {
     const getVehicleTypeInfo = (type) => vehicleTypes.find(t => t.id === type) || vehicleTypes[0];
     const getUserName = (userId) => { const u = data.users?.find(u => u.id === userId); return u ? `${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email : 'Non assigné'; };
     const getPartInfo = (partId) => data.parts?.find(p => p.id === partId);
-    const currentVehicleStock = selectedVehicle ? VehicleService.getVehicleStock(selectedVehicle.id) : [];
+    const currentVehicleStock = selectedVehicle ? (VehicleService.getVehicleStockSync(selectedVehicle.id) || []) : [];
     const totalStockValue = currentVehicleStock.reduce((sum, item) => { const part = getPartInfo(item.partId); return sum + (item.quantity * (part?.price || 0)); }, 0);
 
     return h('div', null,
