@@ -27866,14 +27866,25 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
         showToast('Configuration sauvegardée', 'success');
     };
     
+    // Helper pour construire l'URL API correcte
+    const getApiUrl = (params = '') => {
+        let baseUrl = apiUrl.trim().replace(/\/$/, ''); // Enlever le slash final
+        // Si l'URL ne contient pas /api/sync, l'ajouter
+        if (!baseUrl.includes('/api/sync')) {
+            baseUrl = baseUrl + '/api/sync';
+        }
+        return params ? `${baseUrl}?${params}` : baseUrl;
+    };
+    
     const testConnection = async () => {
         if (!apiUrl) {
             addLog('URL API non configurée', 'error');
             return;
         }
-        addLog('Test de connexion...', 'info');
+        const url = getApiUrl();
+        addLog(`Test de connexion vers ${url}...`, 'info');
         try {
-            const resp = await fetch(apiUrl);
+            const resp = await fetch(url);
             const data = await resp.json();
             if (data.status === 'ready') {
                 addLog(`✅ Connexion OK - ${data.message}`, 'success');
@@ -27891,7 +27902,7 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
             addLog('URL API non configurée', 'error');
             return null;
         }
-        const url = `${apiUrl}?${params}`;
+        const url = getApiUrl(params);
         addLog(`🔄 ${params}`, 'info');
         
         try {
@@ -28057,7 +28068,7 @@ const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
         h('div', { style: { ...cardStyle, marginBottom: 20 } },
             h('h3', { style: { marginBottom: 15, color: '#4fc3f7' } }, '⚙️ Configuration API'),
             h('div', { style: { display: 'flex', gap: 15, flexWrap: 'wrap' } },
-                h('input', { type: 'text', value: apiUrl, onChange: e => setApiUrl(e.target.value), placeholder: 'URL API (ex: https://xxx.vercel.app/api/sync)', style: inputStyle }),
+                h('input', { type: 'text', value: apiUrl, onChange: e => setApiUrl(e.target.value), placeholder: 'URL de base (ex: https://auv-asc-app.vercel.app)', style: inputStyle }),
                 h('button', { onClick: saveConfig, style: btnPrimary }, '💾 Sauvegarder'),
                 h('button', { onClick: testConnection, style: btnSecondary }, '🔌 Tester')
             )
