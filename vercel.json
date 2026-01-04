@@ -1,11 +1,6 @@
 {
   "version": 2,
-  "builds": [
-    { "src": "api/sync.py", "use": "@vercel/python" }
-  ],
-  "routes": [
-    { "src": "/api/sync", "dest": "/api/sync.py" }
-  ], 
+
   "functions": {
    "api/sync.py": {
       "maxDuration": 300,
@@ -42,5 +37,11 @@
       "path": "/api/cron",
       "schedule": "0 * * * *"
     }
+  ],
+  "builds": [
+    { "src": "api/sync.py", "use": "@vercel/python" }
+  ],
+  "routes": [
+    { "src": "/api/sync", "dest": "/api/sync.py" }
   ]
 }
