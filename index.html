@@ -19169,1112 +19169,1043 @@ const PlanningPage = ({ data, user, refresh, showToast }) => {
 // TOURNÉES TAB - Gestion des tournées d'entretien
 // ==========================================
 const TourneesTab = ({ equipements, user, showToast }) => {
-    // États
-    const [activeView, setActiveView] = useState('planning');
+    // États principaux
+    const [activeView, setActiveView] = useState('aplanifier');
     const [selectedWeek, setSelectedWeek] = useState(0);
-    const [tournees, setTournees] = useState([]);
-    const [templates, setTemplates] = useState([]);
+    const [tourneesPlanifiees, setTourneesPlanifiees] = useState([]);
+    const [allTourneesPlanifiees, setAllTourneesPlanifiees] = useState([]);
     const [techniciens, setTechniciens] = useState([]);
+    const [absences, setAbsences] = useState([]);
+    const [joursFeries, setJoursFeries] = useState([]);
+    const [lieuxDepart, setLieuxDepart] = useState([]);
+    const [selectedDef, setSelectedDef] = useState(null);
     const [selectedTournee, setSelectedTournee] = useState(null);
-    const [editingTournee, setEditingTournee] = useState(null);
-    const [draggedTournee, setDraggedTournee] = useState(null);
-    const [showSuggestions, setShowSuggestions] = useState(false);
-    const [showImprevu, setShowImprevu] = useState(false);
+    const [showPlanifier, setShowPlanifier] = useState(false);
+    const [showAutoPlan, setShowAutoPlan] = useState(false);
+    const [showAbsences, setShowAbsences] = useState(false);
+    const [showLieuxDepart, setShowLieuxDepart] = useState(false);
+    const [showEditCoords, setShowEditCoords] = useState(null);
+    const [planifierData, setPlanifierData] = useState({ date: '', technicien_id: '', heure_debut: '08:00', lieu_depart_id: '' });
+    const [absenceForm, setAbsenceForm] = useState({ technicien_id: '', date_debut: '', date_fin: '', type: 'conge', motif: '' });
+    const [lieuForm, setLieuForm] = useState({ nom: '', type: 'depot', adresse: '', ville: '', latitude: '', longitude: '', technicien_id: '' });
+    const [filterSecteur, setFilterSecteur] = useState('');
+    const [filterStatut, setFilterStatut] = useState('');
+    const [filterFrequence, setFilterFrequence] = useState('');
     const [showMap, setShowMap] = useState(false);
     const [loading, setLoading] = useState(true);
+    const [suggestions, setSuggestions] = useState([]);
+    const [selectedSuggestions, setSelectedSuggestions] = useState([]);
+    const [coordsEdit, setCoordsEdit] = useState({ latitude: '', longitude: '' });
+    const [selectedLieuDepart, setSelectedLieuDepart] = useState(null);
     const mapContainerRef = useRef(null);
     const mapInstanceRef = useRef(null);
     
-    const joursSemaine = ['', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
-    const joursShort = ['', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
-    const DUREE_ENTRETIEN = 30; // minutes par équipement
+    const joursSemaine = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+    const joursComplets = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+    const DUREE_ENTRETIEN = 30;
+    const VITESSE_MOYENNE = 40;
+    const MAX_HEURES_JOUR = 7;
     
-    // Couleurs techniciens
     const techColors = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EF4444', '#14B8A6', '#EC4899', '#6366F1'];
+    const absenceTypes = { conge: { label: 'Congé', color: '#3B82F6', icon: '🏖️' }, rtt: { label: 'RTT', color: '#10B981', icon: '📅' }, maladie: { label: 'Maladie', color: '#EF4444', icon: '🏥' }, formation: { label: 'Formation', color: '#8B5CF6', icon: '📚' }, autre: { label: 'Autre', color: '#6B7280', icon: '📌' } };
+    const lieuTypes = { entreprise: { label: 'Siège/Entreprise', icon: '🏢' }, domicile: { label: 'Domicile', icon: '🏠' }, hotel: { label: 'Hôtel', icon: '🏨' }, depot: { label: 'Dépôt', icon: '📦' }, autre: { label: 'Autre', icon: '📍' } };
     
-    // Coordonnées approximatives des villes (Auvergne)
+    // Lieu de départ par défaut (siège)
+    const SIEGE_COORDS = { latitude: 45.7772, longitude: 3.0870, nom: 'Siège Auvergne Ascenseurs' };
+    
+    // ========== COORDONNÉES GPS ==========
+    
     const villeCoords = {
         'CLERMONT-FERRAND': [45.7772, 3.0870], 'CLERMONT FERRAND': [45.7772, 3.0870], 'CLERMONT': [45.7772, 3.0870],
         'RIOM': [45.8930, 3.1140], 'ISSOIRE': [45.5450, 3.2500], 'THIERS': [45.8570, 3.5480],
         'AMBERT': [45.5490, 3.7420], 'VICHY': [46.1270, 3.4270], 'MONTLUCON': [46.3400, 2.6030],
         'MOULINS': [46.5640, 3.3320], 'AURILLAC': [44.9260, 2.4410], 'LE PUY': [45.0430, 3.8850],
         'SAINT-ETIENNE': [45.4340, 4.3900], 'LYON': [45.7640, 4.8357], 'CHAMALIÈRES': [45.7730, 3.0650],
-        'COURNON': [45.7410, 3.1950], 'COURNON D AUVERGNE': [45.7410, 3.1950], 'AUBIERE': [45.7520, 3.1110],
-        'BEAUMONT': [45.7530, 3.0820], 'CHAMALIERES': [45.7730, 3.0650], 'ROYAT': [45.7680, 3.0490],
-        'CEYRAT': [45.7310, 3.0650], 'ROMAGNAT': [45.7180, 3.0920], 'PONT DU CHATEAU': [45.7980, 3.2490],
-        'LEMPDES': [45.7710, 3.1930], 'GERZAT': [45.8220, 3.1440], 'AULNAT': [45.7950, 3.1680]
+        'CHAMALIERES': [45.7730, 3.0650], 'COURNON': [45.7410, 3.1950], 'AUBIERE': [45.7520, 3.1110],
+        'BEAUMONT': [45.7530, 3.0820], 'ROYAT': [45.7680, 3.0490], 'CEYRAT': [45.7310, 3.0650],
+        'ROMAGNAT': [45.7180, 3.0920], 'PONT DU CHATEAU': [45.7980, 3.2490], 'LEMPDES': [45.7710, 3.1930],
+        'GERZAT': [45.8220, 3.1440], 'CEBAZAT': [45.8320, 3.0980], 'BLANZAT': [45.8280, 3.0720],
+        'DURTOL': [45.7920, 3.0420], 'NOHANENT': [45.8050, 3.0380], 'SAYAT': [45.8180, 3.0560],
+        'CHATEL-GUYON': [45.9220, 3.0650], 'VOLVIC': [45.8720, 3.0400], 'MOZAC': [45.8910, 3.0990],
+        'ENNEZAT': [45.8970, 3.2180], 'MARINGUES': [45.9270, 3.3340], 'LEZOUX': [45.8290, 3.3790],
+        'COURPIERE': [45.7560, 3.5440], 'BILLOM': [45.7230, 3.3400], 'VIC LE COMTE': [45.6430, 3.2500],
+        'VEYRE MONTON': [45.6860, 3.1520], 'LA BOURBOULE': [45.5880, 2.7380], 'LE MONT DORE': [45.5740, 2.8080],
+        'SAINT NECTAIRE': [45.5830, 2.9940], 'BESSE': [45.5170, 2.9340], 'CHAMPEIX': [45.5890, 3.1340]
     };
     
-    // Obtenir coordonnées d'un équipement
-    const getEquipementCoords = (eq) => {
-        if (!eq) return null;
-        const ville = (eq.ville || '').toUpperCase().trim();
-        // Chercher correspondance exacte ou partielle
+    const getEquipementCoords = useCallback((eq) => {
+        if (!eq) return [45.7772, 3.0870];
+        if (eq.latitude && eq.longitude) return [parseFloat(eq.latitude), parseFloat(eq.longitude)];
+        
+        const ville = (eq.ville || '').toUpperCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         for (const [key, coords] of Object.entries(villeCoords)) {
-            if (ville.includes(key) || key.includes(ville)) {
-                // Ajouter un petit décalage aléatoire basé sur l'adresse pour éviter superposition
+            const keyNorm = key.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+            if (ville.includes(keyNorm) || keyNorm.includes(ville)) {
                 const hash = (eq.adresse || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-                const offset = (hash % 100) / 10000;
-                return [coords[0] + offset, coords[1] + offset];
+                return [coords[0] + (hash % 100) / 10000, coords[1] + (hash % 100) / 10000];
             }
         }
-        return [45.7772, 3.0870]; // Clermont-Ferrand par défaut
-    };
+        const hash = ((eq.adresse || '') + (eq.ville || '')).split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+        return [45.7772 + (hash % 50) / 10000, 3.0870 + (hash % 50) / 10000];
+    }, []);
     
-    // Initialiser/mettre à jour la carte
-    useEffect(() => {
-        if (showMap && selectedTournee && mapContainerRef.current) {
-            // Nettoyer l'ancienne carte
-            if (mapInstanceRef.current) {
-                mapInstanceRef.current.remove();
-                mapInstanceRef.current = null;
+    const isWellGeolocated = useCallback((eq) => eq.coords_source === 'manual' || (eq.latitude && eq.longitude), []);
+    
+    const calculerDistance = useCallback((lat1, lon1, lat2, lon2) => {
+        const R = 6371;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }, []);
+    
+    // Obtenir le lieu de départ pour un technicien
+    const getLieuDepartTechnicien = useCallback((techId) => {
+        if (!techId) return SIEGE_COORDS;
+        
+        const tech = techniciens.find(t => t.id === techId);
+        
+        // 1. Lieu défini par défaut pour ce technicien
+        if (tech?.lieu_depart_defaut) {
+            const lieu = lieuxDepart.find(l => l.id === tech.lieu_depart_defaut);
+            if (lieu) return { latitude: parseFloat(lieu.latitude), longitude: parseFloat(lieu.longitude), nom: lieu.nom };
+        }
+        
+        // 2. Lieu personnel du technicien
+        const lieuPerso = lieuxDepart.find(l => l.technicien_id === techId);
+        if (lieuPerso) return { latitude: parseFloat(lieuPerso.latitude), longitude: parseFloat(lieuPerso.longitude), nom: lieuPerso.nom };
+        
+        // 3. Domicile du technicien
+        if (tech?.domicile_latitude && tech?.domicile_longitude) {
+            return { latitude: parseFloat(tech.domicile_latitude), longitude: parseFloat(tech.domicile_longitude), nom: 'Domicile' };
+        }
+        
+        // 4. Lieu par défaut (siège)
+        const siege = lieuxDepart.find(l => l.is_default && !l.technicien_id);
+        if (siege) return { latitude: parseFloat(siege.latitude), longitude: parseFloat(siege.longitude), nom: siege.nom };
+        
+        return SIEGE_COORDS;
+    }, [techniciens, lieuxDepart]);
+    
+    // Calculer le temps de trajet avec point de départ
+    const calculerTempsTrajet = useCallback((eqs, lieuDepart = null) => {
+        if (!eqs || eqs.length === 0) return { trajetAller: 0, trajetInter: 0, trajetRetour: 0, total: 0 };
+        
+        const depart = lieuDepart || SIEGE_COORDS;
+        let trajetAller = 0, trajetInter = 0, trajetRetour = 0;
+        
+        // Trajet aller: départ → premier équipement
+        const [lat1, lon1] = getEquipementCoords(eqs[0]);
+        trajetAller = calculerDistance(depart.latitude, depart.longitude, lat1, lon1);
+        
+        // Trajets inter-équipements
+        for (let i = 0; i < eqs.length - 1; i++) {
+            const [latA, lonA] = getEquipementCoords(eqs[i]);
+            const [latB, lonB] = getEquipementCoords(eqs[i + 1]);
+            trajetInter += calculerDistance(latA, lonA, latB, lonB);
+        }
+        
+        // Trajet retour: dernier équipement → départ
+        const [latN, lonN] = getEquipementCoords(eqs[eqs.length - 1]);
+        trajetRetour = calculerDistance(latN, lonN, depart.latitude, depart.longitude);
+        
+        const distanceTotale = trajetAller + trajetInter + trajetRetour;
+        const tempsTotalMin = Math.round((distanceTotale / VITESSE_MOYENNE) * 60 * 1.3);
+        
+        return {
+            trajetAller: Math.round((trajetAller / VITESSE_MOYENNE) * 60 * 1.3),
+            trajetInter: Math.round((trajetInter / VITESSE_MOYENNE) * 60 * 1.3),
+            trajetRetour: Math.round((trajetRetour / VITESSE_MOYENNE) * 60 * 1.3),
+            total: tempsTotalMin,
+            distanceKm: Math.round(distanceTotale * 10) / 10
+        };
+    }, [getEquipementCoords, calculerDistance]);
+    
+    // ========== FRÉQUENCES ==========
+    
+    const getVisitesParAn = useCallback((eq) => {
+        if (eq.nb_visites_an && eq.nb_visites_an >= 1 && eq.nb_visites_an <= 12) return eq.nb_visites_an;
+        return 6;
+    }, []);
+    
+    const getCycleJours = (v) => Math.round(365 / v);
+    const formatCycle = (v) => ({ 1: '1x/an', 2: '2x/an', 3: '3x/an', 4: '4x/an', 6: '6x/an', 12: '12x/an' }[v] || `${v}x/an`);
+    const getFrequenceColor = (v) => v <= 2 ? '#6366F1' : v <= 4 ? '#3B82F6' : v <= 6 ? '#10B981' : '#F59E0B';
+    
+    // ========== DISPONIBILITÉS ==========
+    
+    const isJourFerie = useCallback((date) => {
+        const dateStr = date.toISOString().split('T')[0];
+        return joursFeries.find(jf => jf.date === dateStr);
+    }, [joursFeries]);
+    
+    const isTechnicienAbsent = useCallback((techId, date) => {
+        const dateStr = date.toISOString().split('T')[0];
+        return absences.find(a => a.technicien_id === techId && dateStr >= a.date_debut && dateStr <= a.date_fin);
+    }, [absences]);
+    
+    const isJourTravaille = useCallback((date) => {
+        const day = date.getDay();
+        if (day === 0 || day === 6) return false;
+        if (isJourFerie(date)) return false;
+        return true;
+    }, [isJourFerie]);
+    
+    const getTechniciensDisponibles = useCallback((date) => {
+        if (!isJourTravaille(date)) return [];
+        return techniciens.filter(tech => !isTechnicienAbsent(tech.id, date));
+    }, [techniciens, isJourTravaille, isTechnicienAbsent]);
+    
+    const getIndisponibiliteRaison = useCallback((date, techId = null) => {
+        const day = date.getDay();
+        if (day === 0) return { type: 'weekend', label: 'Dimanche' };
+        if (day === 6) return { type: 'weekend', label: 'Samedi' };
+        
+        const ferie = isJourFerie(date);
+        if (ferie) return { type: 'ferie', label: ferie.nom };
+        
+        if (techId) {
+            const absence = isTechnicienAbsent(techId, date);
+            if (absence) return { type: 'absence', label: absenceTypes[absence.type]?.label || 'Absent' };
+        }
+        
+        return null;
+    }, [isJourFerie, isTechnicienAbsent]);
+    
+    // ========== GROUPEMENT TOURNÉES ==========
+    
+    const tourneesDef = useMemo(() => {
+        const grouped = {};
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        equipements.forEach(eq => {
+            if (!eq.secteur || !eq.ordre2) return;
+            const key = `${eq.secteur}|${eq.ordre2}`;
+            if (!grouped[key]) {
+                grouped[key] = { id: key, secteur: eq.secteur, ordre: eq.ordre2, nom: `${eq.secteur} - Tournée ${eq.ordre2}`, equipements: [], derniereVisite: null, nbVisitesParAn: {} };
+            }
+            grouped[key].equipements.push(eq);
+            const visites = getVisitesParAn(eq);
+            grouped[key].nbVisitesParAn[visites] = (grouped[key].nbVisitesParAn[visites] || 0) + 1;
+            if (eq.dat_pass) {
+                const datPass = new Date(eq.dat_pass);
+                if (!grouped[key].derniereVisite || datPass > grouped[key].derniereVisite) grouped[key].derniereVisite = datPass;
+            }
+        });
+        
+        return Object.values(grouped).map(def => {
+            let maxVisites = Math.max(...Object.keys(def.nbVisitesParAn).map(Number), 6);
+            const cycleJours = getCycleJours(maxVisites);
+            const trajets = calculerTempsTrajet(def.equipements, selectedLieuDepart || SIEGE_COORDS);
+            const dureeEntretien = def.equipements.length * DUREE_ENTRETIEN;
+            const dureeTotale = dureeEntretien + trajets.total;
+            const eqMalGeoloc = def.equipements.filter(eq => !isWellGeolocated(eq));
+            
+            let prochaineVisite = null, joursRestants = null, statut = 'jamais';
+            if (def.derniereVisite) {
+                prochaineVisite = new Date(def.derniereVisite);
+                prochaineVisite.setDate(prochaineVisite.getDate() + cycleJours);
+                joursRestants = Math.ceil((prochaineVisite - today) / (1000 * 60 * 60 * 24));
+                const seuilAlerte = Math.max(7, Math.round(cycleJours * 0.2));
+                statut = joursRestants < 0 ? 'retard' : joursRestants <= seuilAlerte ? 'aplanifier' : 'ok';
             }
             
-            // Attendre que le conteneur soit visible
-            setTimeout(() => {
-                if (!mapContainerRef.current) return;
+            return { ...def, visitesParAn: maxVisites, cycleJours, prochaineVisite, joursRestants, statut, trajets, dureeEntretien, dureeTotale, eqMalGeoloc };
+        }).sort((a, b) => {
+            const ordre = { retard: 0, aplanifier: 1, jamais: 2, ok: 3 };
+            const diff = (ordre[a.statut] || 4) - (ordre[b.statut] || 4);
+            if (diff !== 0) return diff;
+            if (a.joursRestants !== null && b.joursRestants !== null) return a.joursRestants - b.joursRestants;
+            return (a.secteur || '').localeCompare(b.secteur || '');
+        });
+    }, [equipements, getVisitesParAn, calculerTempsTrajet, isWellGeolocated, selectedLieuDepart]);
+    
+    const stats = useMemo(() => ({
+        total: tourneesDef.length,
+        retard: tourneesDef.filter(t => t.statut === 'retard').length,
+        aplanifier: tourneesDef.filter(t => t.statut === 'aplanifier').length,
+        ok: tourneesDef.filter(t => t.statut === 'ok').length,
+        jamais: tourneesDef.filter(t => t.statut === 'jamais').length,
+        malGeoloc: tourneesDef.reduce((s, t) => s + t.eqMalGeoloc.length, 0)
+    }), [tourneesDef]);
+    
+    const secteurs = useMemo(() => [...new Set(tourneesDef.map(t => t.secteur))].sort(), [tourneesDef]);
+    const frequences = useMemo(() => [...new Set(tourneesDef.map(t => t.visitesParAn))].sort((a, b) => a - b), [tourneesDef]);
+    const tourneesDefFiltered = useMemo(() => {
+        let f = tourneesDef;
+        if (filterSecteur) f = f.filter(t => t.secteur === filterSecteur);
+        if (filterStatut) f = f.filter(t => t.statut === filterStatut);
+        if (filterFrequence) f = f.filter(t => t.visitesParAn === parseInt(filterFrequence));
+        return f;
+    }, [tourneesDef, filterSecteur, filterStatut, filterFrequence]);
+    const tourneesUrgentes = useMemo(() => tourneesDef.filter(t => ['retard', 'aplanifier', 'jamais'].includes(t.statut)), [tourneesDef]);
+    
+    // ========== PLANIFICATION INTELLIGENTE ==========
+    
+    const getChargeParJour = useMemo(() => {
+        const charge = {};
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        for (let i = 0; i < 84; i++) {
+            const d = new Date(today);
+            d.setDate(d.getDate() + i);
+            const key = d.toISOString().split('T')[0];
+            const ferie = isJourFerie(d);
+            const isWE = d.getDay() === 0 || d.getDay() === 6;
+            
+            if (!isWE && !ferie) {
+                const techsDispo = getTechniciensDisponibles(d);
+                charge[key] = { date: d, heures: 0, tournees: [], techniciens: {}, techsDisponibles: techsDispo, capaciteTotale: techsDispo.length * MAX_HEURES_JOUR * 60 };
+            }
+        }
+        
+        allTourneesPlanifiees.forEach(t => {
+            if (charge[t.date]) {
+                const duree = (t.duree_estimee || 120) + (t.temps_trajet || 0);
+                charge[t.date].heures += duree / 60;
+                charge[t.date].tournees.push(t);
+                if (t.technicien_id) charge[t.date].techniciens[t.technicien_id] = (charge[t.date].techniciens[t.technicien_id] || 0) + duree;
+            }
+        });
+        
+        return charge;
+    }, [allTourneesPlanifiees, isJourFerie, getTechniciensDisponibles]);
+    
+    const genererSuggestions = useCallback(() => {
+        const suggs = [];
+        const charge = {};
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        Object.entries(getChargeParJour).forEach(([k, v]) => {
+            charge[k] = { ...v, techniciens: { ...v.techniciens }, techsDisponibles: [...v.techsDisponibles] };
+        });
+        
+        const sorted = [...tourneesUrgentes].sort((a, b) => {
+            if (a.statut === 'retard' && b.statut !== 'retard') return -1;
+            if (b.statut === 'retard' && a.statut !== 'retard') return 1;
+            if (a.joursRestants !== null && b.joursRestants !== null) return a.joursRestants - b.joursRestants;
+            return 0;
+        });
+        
+        sorted.forEach(tournee => {
+            const dateIdealeCible = tournee.prochaineVisite || today;
+            const debutRecherche = new Date(Math.max(today.getTime(), dateIdealeCible.getTime() - 7 * 86400000));
+            const finRecherche = new Date(dateIdealeCible.getTime() + 21 * 86400000);
+            
+            let meilleur = { date: null, score: -Infinity, technicien: null };
+            
+            Object.entries(charge).forEach(([dateStr, info]) => {
+                const dateObj = new Date(dateStr);
+                if (dateObj < debutRecherche || dateObj > finRecherche || info.techsDisponibles.length === 0) return;
                 
-                const map = L.map(mapContainerRef.current).setView([45.7772, 3.0870], 11);
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    attribution: '© OpenStreetMap'
-                }).addTo(map);
+                const joursDiff = Math.abs((dateObj - dateIdealeCible) / 86400000);
+                const scoreProximite = 100 - joursDiff * 3;
+                const scoreCharge = Math.max(0, 100 - (info.heures / (info.techsDisponibles.length * MAX_HEURES_JOUR)) * 100);
                 
-                const eqs = selectedTournee.equipementIds.map(id => equipements.find(e => e.id_wsoucont === id)).filter(Boolean);
-                const coords = [];
-                
-                eqs.forEach((eq, idx) => {
-                    const pos = getEquipementCoords(eq);
-                    if (pos) {
-                        const marker = L.marker(pos).addTo(map);
-                        marker.bindPopup(`<strong>${idx + 1}. ${eq.ascenseur}</strong><br/>${eq.adresse}<br/>${eq.ville}`);
-                        
-                        // Numéro sur le marqueur
-                        const icon = L.divIcon({
-                            className: 'custom-marker',
-                            html: `<div style="background:${COLORS.primary};color:white;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:12px;border:2px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.3)">${idx + 1}</div>`,
-                            iconSize: [24, 24],
-                            iconAnchor: [12, 12]
-                        });
-                        marker.setIcon(icon);
-                        coords.push(pos);
+                let techOk = null, minCharge = Infinity;
+                info.techsDisponibles.forEach(tech => {
+                    const lieuDepart = getLieuDepartTechnicien(tech.id);
+                    const trajets = calculerTempsTrajet(tournee.equipements, lieuDepart);
+                    const dureeTotale = tournee.dureeEntretien + trajets.total;
+                    const chargeTech = (info.techniciens[tech.id] || 0) / 60;
+                    if (chargeTech + dureeTotale / 60 <= MAX_HEURES_JOUR && chargeTech < minCharge) {
+                        minCharge = chargeTech;
+                        techOk = { ...tech, lieuDepart, trajets, dureeTotale };
                     }
                 });
                 
-                // Tracer l'itinéraire
-                if (coords.length > 1) {
-                    L.polyline(coords, { 
-                        color: selectedTournee.technicien?.couleur || COLORS.primary, 
-                        weight: 3, 
-                        opacity: 0.8,
-                        dashArray: '10, 10' 
-                    }).addTo(map);
-                }
+                if (!techOk) return;
                 
-                // Ajuster la vue
-                if (coords.length > 0) {
-                    map.fitBounds(coords, { padding: [30, 30] });
-                }
+                const scoreTech = 100 - (minCharge / MAX_HEURES_JOUR) * 100;
+                const scoreRepart = Math.max(0, 50 - info.tournees.length * 10);
+                const scoreTotal = scoreProximite * 0.35 + scoreCharge * 0.25 + scoreTech * 0.25 + scoreRepart * 0.15;
                 
-                mapInstanceRef.current = map;
-            }, 100);
+                if (scoreTotal > meilleur.score) {
+                    meilleur = { date: dateStr, score: scoreTotal, technicien: techOk };
+                }
+            });
+            
+            if (meilleur.date && meilleur.technicien) {
+                charge[meilleur.date].heures += meilleur.technicien.dureeTotale / 60;
+                charge[meilleur.date].techniciens[meilleur.technicien.id] = (charge[meilleur.date].techniciens[meilleur.technicien.id] || 0) + meilleur.technicien.dureeTotale;
+                charge[meilleur.date].tournees.push({ nom: tournee.nom });
+                
+                suggs.push({
+                    tournee: { ...tournee, trajets: meilleur.technicien.trajets, dureeTotale: meilleur.technicien.dureeTotale },
+                    date: meilleur.date,
+                    technicien: meilleur.technicien,
+                    lieuDepart: meilleur.technicien.lieuDepart,
+                    score: meilleur.score
+                });
+            }
+        });
+        
+        return suggs;
+    }, [tourneesUrgentes, getChargeParJour, getLieuDepartTechnicien, calculerTempsTrajet]);
+    
+    const planifierEnLot = async (suggsAPlanifier) => {
+        if (suggsAPlanifier.length === 0) return showToast('Aucune sélection', 'error');
+        setLoading(true);
+        let success = 0, errors = 0;
+        
+        for (const sugg of suggsAPlanifier) {
+            try {
+                await db.from('tournees').insert({
+                    nom: sugg.tournee.nom, secteur: sugg.tournee.secteur, ordre: sugg.tournee.ordre,
+                    date: sugg.date, heure_debut: '08:00', status: 'planifiee',
+                    duree_estimee: sugg.tournee.dureeEntretien, temps_trajet: sugg.tournee.trajets.total,
+                    technicien_id: sugg.technicien?.id, lieu_depart_id: sugg.lieuDepart?.id || null
+                });
+                success++;
+            } catch (err) { errors++; }
         }
         
-        return () => {
-            if (mapInstanceRef.current && !showMap) {
-                mapInstanceRef.current.remove();
-                mapInstanceRef.current = null;
-            }
-        };
-    }, [showMap, selectedTournee]);
-    
-    // Export PDF - Feuille de route
-    const exportPDF = (tournee) => {
-        const eqs = tournee.equipementIds.map(id => equipements.find(e => e.id_wsoucont === id)).filter(Boolean);
-        const techName = tournee.technicien?.name || 'Non assigné';
-        const dateStr = new Date(tournee.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-        const duree = tournee.duree_estimee || eqs.length * DUREE_ENTRETIEN;
-        
-        const html = `
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Feuille de route - ${tournee.nom}</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; padding: 20px; font-size: 12px; }
-        .header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid #E11D48; }
-        .logo { font-size: 20px; font-weight: bold; color: #E11D48; }
-        .title { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
-        .subtitle { color: #666; }
-        .info-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
-        .info-box { background: #f5f5f5; padding: 10px; border-radius: 6px; }
-        .info-label { font-size: 10px; color: #666; margin-bottom: 2px; }
-        .info-value { font-weight: bold; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-        th { background: #E11D48; color: white; padding: 10px; text-align: left; font-size: 11px; }
-        td { padding: 10px; border-bottom: 1px solid #ddd; vertical-align: top; }
-        tr:nth-child(even) { background: #f9f9f9; }
-        .num { width: 30px; text-align: center; font-weight: bold; color: #E11D48; }
-        .check { width: 60px; text-align: center; }
-        .checkbox { width: 18px; height: 18px; border: 2px solid #999; display: inline-block; margin: 0 3px; }
-        .notes { height: 80px; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 15px; }
-        .notes-title { font-weight: bold; margin-bottom: 5px; }
-        .signature { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
-        .sig-box { border: 1px solid #ddd; padding: 10px; border-radius: 6px; min-height: 80px; }
-        .sig-title { font-size: 10px; color: #666; margin-bottom: 5px; }
-        .footer { margin-top: 20px; text-align: center; font-size: 10px; color: #999; }
-        @media print { body { padding: 10px; } }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <div>
-            <div class="logo">🛗 Auvergne Ascenseurs</div>
-            <div style="font-size:10px;color:#666;margin-top:4px">Feuille de route</div>
-        </div>
-        <div style="text-align:right">
-            <div class="title">${tournee.nom}</div>
-            <div class="subtitle">${dateStr}</div>
-        </div>
-    </div>
-    
-    <div class="info-grid">
-        <div class="info-box">
-            <div class="info-label">Technicien</div>
-            <div class="info-value">👤 ${techName}</div>
-        </div>
-        <div class="info-box">
-            <div class="info-label">Secteur</div>
-            <div class="info-value">📍 ${tournee.secteur || '-'}</div>
-        </div>
-        <div class="info-box">
-            <div class="info-label">Équipements</div>
-            <div class="info-value">🏢 ${eqs.length}</div>
-        </div>
-        <div class="info-box">
-            <div class="info-label">Durée estimée</div>
-            <div class="info-value">⏱️ ${duree} min (${(duree/60).toFixed(1)}h)</div>
-        </div>
-    </div>
-    
-    <table>
-        <thead>
-            <tr>
-                <th class="num">N°</th>
-                <th>Ascenseur</th>
-                <th>Adresse</th>
-                <th>Ville</th>
-                <th>Dernière visite</th>
-                <th class="check">Fait</th>
-                <th>Observations</th>
-            </tr>
-        </thead>
-        <tbody>
-            ${eqs.map((eq, idx) => {
-                const lastVisit = eq.dat_pass ? new Date(eq.dat_pass).toLocaleDateString('fr-FR') : '-';
-                return `
-                <tr>
-                    <td class="num">${idx + 1}</td>
-                    <td><strong>${eq.ascenseur || '-'}</strong></td>
-                    <td>${eq.adresse || '-'}</td>
-                    <td>${eq.ville || '-'}</td>
-                    <td>${lastVisit}</td>
-                    <td class="check"><span class="checkbox"></span></td>
-                    <td></td>
-                </tr>
-                `;
-            }).join('')}
-        </tbody>
-    </table>
-    
-    <div class="notes-title">📝 Notes générales</div>
-    <div class="notes"></div>
-    
-    <div class="signature">
-        <div class="sig-box">
-            <div class="sig-title">Heure de départ</div>
-        </div>
-        <div class="sig-box">
-            <div class="sig-title">Heure de retour</div>
-        </div>
-    </div>
-    
-    <div class="footer">
-        Généré le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')} - StockApp v6.0
-    </div>
-</body>
-</html>`;
-        
-        // Ouvrir dans une nouvelle fenêtre pour impression
-        const printWindow = window.open('', '_blank');
-        printWindow.document.write(html);
-        printWindow.document.close();
-        printWindow.onload = () => {
-            printWindow.print();
-        };
-        
-        showToast('Feuille de route générée', 'success');
+        showToast(`${success} planifiée(s)${errors ? `, ${errors} erreur(s)` : ''}`, success > 0 ? 'success' : 'error');
+        setShowAutoPlan(false);
+        setSelectedSuggestions([]);
+        await loadAllTournees();
+        await loadTourneesPlanifiees(selectedWeek);
+        setLoading(false);
     };
     
-    // Charger les données
-    useEffect(() => {
-        loadData();
-    }, []);
+    // ========== CHARGEMENT ==========
+    
+    useEffect(() => { loadData(); }, []);
     
     const loadData = async () => {
         setLoading(true);
         try {
-            // Charger les templates
-            const { data: tplData } = await db.from('tournee_templates').select('*').order('jour_semaine');
-            setTemplates(tplData || []);
+            const [techRes, absRes, jfRes, lieuxRes] = await Promise.all([
+                db.from('profiles').select('*').in('role', ['technicien', 'admin']),
+                db.from('absences').select('*').gte('date_fin', new Date().toISOString().split('T')[0]),
+                db.from('jours_feries').select('*'),
+                db.from('lieux_depart').select('*')
+            ]);
             
-            // Charger les techniciens (depuis profiles avec role technicien)
-            const { data: techData } = await db.from('profiles').select('*').in('role', ['technicien', 'admin']);
-            const techsWithColor = (techData || []).map((t, idx) => ({
-                ...t,
-                name: [t.first_name, t.last_name].filter(Boolean).join(' ') || 'Technicien',
-                couleur: techColors[idx % techColors.length],
-                secteurs: t.sectors ? (typeof t.sectors === 'string' ? JSON.parse(t.sectors) : t.sectors) : []
-            }));
-            setTechniciens(techsWithColor);
+            setTechniciens((techRes.data || []).map((t, idx) => ({
+                ...t, name: [t.first_name, t.last_name].filter(Boolean).join(' ') || 'Technicien', couleur: techColors[idx % techColors.length]
+            })));
+            setAbsences(absRes.data || []);
+            setJoursFeries(jfRes.data || []);
+            setLieuxDepart(lieuxRes.data || []);
             
-            // Charger les tournées de la période
-            await loadTournees(0);
-        } catch (err) {
-            console.error('Erreur chargement tournées:', err);
-        }
+            await loadAllTournees();
+            await loadTourneesPlanifiees(0);
+        } catch (err) { console.error(err); }
         setLoading(false);
     };
     
-    const loadTournees = async (weekOffset) => {
+    const loadAllTournees = async () => {
+        try {
+            const today = new Date();
+            const in3m = new Date(today);
+            in3m.setMonth(in3m.getMonth() + 3);
+            const { data } = await db.from('tournees').select('*').gte('date', today.toISOString().split('T')[0]).lte('date', in3m.toISOString().split('T')[0]);
+            setAllTourneesPlanifiees(data || []);
+        } catch (err) { setAllTourneesPlanifiees([]); }
+    };
+    
+    const loadTourneesPlanifiees = async (weekOffset) => {
         const monday = getMonday(weekOffset);
         const sunday = new Date(monday);
         sunday.setDate(monday.getDate() + 6);
+        try {
+            const { data } = await db.from('tournees').select('*').gte('date', monday.toISOString().split('T')[0]).lte('date', sunday.toISOString().split('T')[0]).order('date');
+            setTourneesPlanifiees((data || []).map(t => ({ ...t, technicien: techniciens.find(tech => tech.id === t.technicien_id), jour: new Date(t.date).getDay() })));
+        } catch (err) { setTourneesPlanifiees([]); }
+    };
+    
+    useEffect(() => { if (techniciens.length > 0) loadTourneesPlanifiees(selectedWeek); }, [selectedWeek, techniciens]);
+    
+    const getMonday = (off = 0) => {
+        const d = new Date();
+        const day = d.getDay();
+        d.setDate(d.getDate() - day + (day === 0 ? -6 : 1) + off * 7);
+        d.setHours(0, 0, 0, 0);
+        return d;
+    };
+    
+    const getWeekDates = () => Array.from({ length: 5 }, (_, i) => { const d = new Date(getMonday(selectedWeek)); d.setDate(d.getDate() + i); return d; });
+    
+    // ========== ACTIONS ==========
+    
+    const planifierTournee = async () => {
+        if (!selectedDef || !planifierData.date) return showToast('Sélectionnez une date', 'error');
+        
+        const lieuDepart = planifierData.lieu_depart_id 
+            ? lieuxDepart.find(l => l.id === planifierData.lieu_depart_id)
+            : getLieuDepartTechnicien(planifierData.technicien_id);
+        const trajets = calculerTempsTrajet(selectedDef.equipements, lieuDepart);
         
         try {
-            const { data: tournData } = await db.from('tournees')
-                .select('*, tournee_equipements(*)')
-                .gte('date', monday.toISOString().split('T')[0])
-                .lte('date', sunday.toISOString().split('T')[0])
-                .order('date');
-            
-            // Enrichir avec technicien
-            const enriched = (tournData || []).map(t => ({
-                ...t,
-                technicien: techniciens.find(tech => tech.id === t.technicien_id),
-                equipementIds: (t.tournee_equipements || []).sort((a, b) => a.ordre - b.ordre).map(te => te.equipement_id),
-                jour: new Date(t.date).getDay() || 7
-            }));
-            setTournees(enriched);
-        } catch (err) {
-            // Si tables n'existent pas encore, générer depuis templates
-            generateFromTemplates(weekOffset);
-        }
+            await db.from('tournees').insert({
+                nom: selectedDef.nom, secteur: selectedDef.secteur, ordre: selectedDef.ordre,
+                date: planifierData.date, heure_debut: planifierData.heure_debut || '08:00', status: 'planifiee',
+                duree_estimee: selectedDef.dureeEntretien, temps_trajet: trajets.total,
+                technicien_id: planifierData.technicien_id || null, lieu_depart_id: lieuDepart?.id || null
+            });
+            showToast('Planifiée', 'success');
+            setShowPlanifier(false);
+            setPlanifierData({ date: '', technicien_id: '', heure_debut: '08:00', lieu_depart_id: '' });
+            setSelectedDef(null);
+            await loadAllTournees();
+            loadTourneesPlanifiees(selectedWeek);
+        } catch (err) { showToast('Erreur: ' + err.message, 'error'); }
     };
     
-    // Générer tournées depuis templates (mode démo/initial)
-    const generateFromTemplates = (weekOffset) => {
-        const monday = getMonday(weekOffset);
-        const generated = templates.map((t, idx) => {
-            const date = new Date(monday);
-            date.setDate(monday.getDate() + t.jour_semaine - 1);
-            const tech = techniciens.find(te => te.id === t.technicien_id);
-            const eqIds = t.equipement_ids ? (typeof t.equipement_ids === 'string' ? JSON.parse(t.equipement_ids) : t.equipement_ids) : [];
-            return {
-                id: `gen-${weekOffset}-${idx}`,
-                template_id: t.id,
-                nom: t.nom,
-                date: date.toISOString().split('T')[0],
-                jour: t.jour_semaine,
-                technicien_id: t.technicien_id,
-                technicien: tech,
-                secteur: t.secteur,
-                equipementIds: eqIds,
-                status: weekOffset < 0 ? 'terminee' : 'planifiee',
-                heure_debut: t.heure_debut || '08:00',
-                duree_estimee: eqIds.length * DUREE_ENTRETIEN
-            };
-        });
-        setTournees(generated);
-    };
-    
-    // Obtenir le lundi de la semaine
-    const getMonday = (weekOffset = 0) => {
-        const today = new Date();
-        const day = today.getDay();
-        const diff = today.getDate() - day + (day === 0 ? -6 : 1) + (weekOffset * 7);
-        const monday = new Date(today.setDate(diff));
-        monday.setHours(0, 0, 0, 0);
-        return monday;
-    };
-    
-    // Dates de la semaine
-    const getWeekDates = () => {
-        const monday = getMonday(selectedWeek);
-        return Array.from({ length: 5 }, (_, i) => {
-            const d = new Date(monday);
-            d.setDate(monday.getDate() + i);
-            return d;
-        });
-    };
-    
-    // Regénérer quand semaine change
-    useEffect(() => {
-        if (templates.length > 0 || techniciens.length > 0) {
-            loadTournees(selectedWeek);
-        }
-    }, [selectedWeek, templates, techniciens]);
-    
-    // Suggestions intelligentes
-    const getSuggestions = (tournee) => {
-        if (!tournee || !equipements.length) return [];
-        const eqsTournee = tournee.equipementIds.map(id => equipements.find(e => e.id_wsoucont === id)).filter(Boolean);
-        if (eqsTournee.length === 0) return [];
-        
-        const autres = equipements.filter(e => !tournee.equipementIds.includes(e.id_wsoucont));
-        return autres.filter(eq => {
-            const memeSecteur = eq.secteur === tournee.secteur;
-            const lastVisit = eq.dat_pass ? new Date(eq.dat_pass) : null;
-            const joursDepuis = lastVisit ? Math.floor((new Date() - lastVisit) / (1000 * 60 * 60 * 24)) : 999;
-            const urgent = joursDepuis > 45;
-            
-            // Même secteur avec >30j sans visite OU proche géographiquement et urgent
-            return (memeSecteur && joursDepuis > 30) || urgent;
-        }).slice(0, 5);
-    };
-    
-    // Optimiser l'itinéraire (algorithme du plus proche voisin basé sur ville/adresse)
-    const optimiserItineraire = (tournee) => {
-        if (!tournee || tournee.equipementIds.length < 2) return;
-        
-        const eqs = tournee.equipementIds.map(id => equipements.find(e => e.id_wsoucont === id)).filter(Boolean);
-        if (eqs.length < 2) return;
-        
-        // Trier par ville puis par adresse
-        const sorted = [...eqs].sort((a, b) => {
-            const villeComp = (a.ville || '').localeCompare(b.ville || '');
-            if (villeComp !== 0) return villeComp;
-            return (a.adresse || '').localeCompare(b.adresse || '');
-        });
-        
-        const newIds = sorted.map(e => e.id_wsoucont);
-        updateTournee(tournee.id, { equipementIds: newIds });
-        showToast('Itinéraire optimisé', 'success');
-    };
-    
-    // Mettre à jour une tournée
-    const updateTournee = (id, updates) => {
-        setTournees(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
-        if (selectedTournee?.id === id) {
-            setSelectedTournee(prev => ({ ...prev, ...updates }));
-        }
-    };
-    
-    // Sauvegarder tournée en base
-    const saveTournee = async (tournee) => {
+    const supprimerTournee = async (id) => {
         try {
-            const tourneeData = {
-                nom: tournee.nom,
-                date: tournee.date,
-                technicien_id: tournee.technicien_id || tournee.technicien?.id,
-                secteur: tournee.secteur,
-                status: tournee.status,
-                heure_debut: tournee.heure_debut,
-                duree_estimee: tournee.equipementIds.length * DUREE_ENTRETIEN
-            };
-            
-            if (tournee.id && !tournee.id.startsWith('gen-') && !tournee.id.startsWith('new-')) {
-                await db.from('tournees').update(tourneeData).eq('id', tournee.id);
-            } else {
-                const { data } = await db.from('tournees').insert(tourneeData).select().single();
-                if (data) {
-                    // Insérer les équipements
-                    const eqData = tournee.equipementIds.map((eqId, idx) => ({
-                        tournee_id: data.id,
-                        equipement_id: eqId,
-                        ordre: idx + 1,
-                        status: 'a_faire'
-                    }));
-                    await db.from('tournee_equipements').insert(eqData);
-                }
-            }
-            showToast('Tournée enregistrée', 'success');
-        } catch (err) {
-            console.error('Erreur sauvegarde:', err);
-            showToast('Erreur lors de la sauvegarde', 'error');
-        }
+            await db.from('tournees').delete().eq('id', id);
+            showToast('Supprimée', 'info');
+            await loadAllTournees();
+            loadTourneesPlanifiees(selectedWeek);
+            setSelectedTournee(null);
+        } catch (err) { showToast('Erreur', 'error'); }
     };
     
-    // Sauvegarder template
-    const saveTemplate = async (template) => {
+    const ajouterAbsence = async () => {
+        if (!absenceForm.technicien_id || !absenceForm.date_debut || !absenceForm.date_fin) return showToast('Champs requis', 'error');
         try {
-            const tplData = {
-                nom: template.nom,
-                jour_semaine: template.jour_semaine,
-                secteur: template.secteur,
-                technicien_id: template.technicien_id,
-                recurrence: template.recurrence || 'hebdo',
-                equipement_ids: JSON.stringify(template.equipement_ids || []),
-                heure_debut: template.heure_debut || '08:00'
-            };
-            
-            if (template.id) {
-                await db.from('tournee_templates').update(tplData).eq('id', template.id);
-            } else {
-                await db.from('tournee_templates').insert(tplData);
-            }
+            await db.from('absences').insert(absenceForm);
+            showToast('Absence ajoutée', 'success');
+            setAbsenceForm({ technicien_id: '', date_debut: '', date_fin: '', type: 'conge', motif: '' });
             loadData();
-            showToast('Template enregistré', 'success');
-        } catch (err) {
-            showToast('Erreur lors de la sauvegarde', 'error');
-        }
+        } catch (err) { showToast('Erreur', 'error'); }
     };
     
-    // Styles
-    const cardStyle = { background: COLORS.card, borderRadius: 12, padding: 16, border: `1px solid ${COLORS.border}`, marginBottom: 12 };
-    const badgeStyle = (color) => ({ display: 'inline-block', padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 500, background: color + '20', color });
+    const supprimerAbsence = async (id) => {
+        try { await db.from('absences').delete().eq('id', id); showToast('Supprimée', 'info'); loadData(); } catch (err) { showToast('Erreur', 'error'); }
+    };
     
+    const ajouterLieuDepart = async () => {
+        if (!lieuForm.nom || !lieuForm.latitude || !lieuForm.longitude) return showToast('Champs requis', 'error');
+        try {
+            await db.from('lieux_depart').insert({
+                ...lieuForm,
+                latitude: parseFloat(lieuForm.latitude),
+                longitude: parseFloat(lieuForm.longitude),
+                technicien_id: lieuForm.technicien_id || null
+            });
+            showToast('Lieu ajouté', 'success');
+            setLieuForm({ nom: '', type: 'depot', adresse: '', ville: '', latitude: '', longitude: '', technicien_id: '' });
+            loadData();
+        } catch (err) { showToast('Erreur', 'error'); }
+    };
+    
+    const supprimerLieu = async (id) => {
+        try { await db.from('lieux_depart').delete().eq('id', id); showToast('Supprimé', 'info'); loadData(); } catch (err) { showToast('Erreur', 'error'); }
+    };
+    
+    const sauvegarderCoords = async (eq) => {
+        const lat = parseFloat(coordsEdit.latitude), lng = parseFloat(coordsEdit.longitude);
+        if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return showToast('Coordonnées invalides', 'error');
+        try {
+            await db.from('equipements').update({ latitude: lat, longitude: lng, coords_source: 'manual' }).eq('id', eq.id);
+            showToast('Coordonnées mises à jour', 'success');
+            setShowEditCoords(null);
+            setCoordsEdit({ latitude: '', longitude: '' });
+            window.location.reload();
+        } catch (err) { showToast('Erreur', 'error'); }
+    };
+    
+    const exportPDF = (def, tournee = null) => {
+        const eqs = def.equipements;
+        const dateStr = tournee ? new Date(tournee.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : 'Non planifiée';
+        const techName = tournee?.technicien?.name || techniciens.find(t => t.id === tournee?.technicien_id)?.name || 'Non assigné';
+        const lieuDepart = tournee?.lieu_depart_id ? lieuxDepart.find(l => l.id === tournee.lieu_depart_id)?.nom : (selectedLieuDepart?.nom || 'Siège');
+        
+        const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${def.nom}</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;padding:20px;font-size:12px}.header{display:flex;justify-content:space-between;margin-bottom:20px;padding-bottom:15px;border-bottom:2px solid #E11D48}.logo{font-size:20px;font-weight:bold;color:#E11D48}.title{font-size:18px;font-weight:bold}.info-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:20px}.info-box{background:#f5f5f5;padding:10px;border-radius:6px}.info-label{font-size:10px;color:#666}.info-value{font-weight:bold}table{width:100%;border-collapse:collapse;margin-bottom:20px}th{background:#E11D48;color:white;padding:8px;text-align:left;font-size:11px}td{padding:8px;border-bottom:1px solid #ddd}tr:nth-child(even){background:#f9f9f9}.num{width:30px;text-align:center;font-weight:bold;color:#E11D48}.check{width:50px;text-align:center}.checkbox{width:16px;height:16px;border:2px solid #999;display:inline-block}.footer{text-align:center;font-size:10px;color:#999;margin-top:20px}</style></head><body>
+<div class="header"><div><div class="logo">🛗 Auvergne Ascenseurs</div><div style="font-size:10px;color:#666">Feuille de route</div></div><div style="text-align:right"><div class="title">${def.nom}</div><div style="color:#666">${dateStr}</div></div></div>
+<div class="info-grid">
+<div class="info-box"><div class="info-label">Départ</div><div class="info-value">📍 ${lieuDepart}</div></div>
+<div class="info-box"><div class="info-label">Technicien</div><div class="info-value">👤 ${techName}</div></div>
+<div class="info-box"><div class="info-label">Équipements</div><div class="info-value">🏢 ${eqs.length}</div></div>
+<div class="info-box"><div class="info-label">Entretien</div><div class="info-value">🔧 ${Math.round(def.dureeEntretien/60*10)/10}h</div></div>
+<div class="info-box"><div class="info-label">Trajet</div><div class="info-value">🚗 ${def.trajets.total}min</div></div>
+<div class="info-box"><div class="info-label">Distance</div><div class="info-value">📏 ${def.trajets.distanceKm}km</div></div>
+</div>
+<table><thead><tr><th class="num">N°</th><th>Ascenseur</th><th>Adresse</th><th>Ville</th><th>Fréq.</th><th>Dernière</th><th class="check">✓</th><th>Obs.</th></tr></thead><tbody>
+${eqs.map((eq,i)=>`<tr><td class="num">${i+1}</td><td><strong>${eq.ascenseur||'-'}</strong></td><td>${eq.adresse||'-'}</td><td>${eq.ville||'-'}</td><td>${eq.nb_visites_an||6}x/an</td><td>${eq.dat_pass?new Date(eq.dat_pass).toLocaleDateString('fr-FR'):'-'}</td><td class="check"><span class="checkbox"></span></td><td></td></tr>`).join('')}
+</tbody></table>
+<div class="footer">Généré le ${new Date().toLocaleDateString('fr-FR')} - StockApp v6.0</div></body></html>`;
+        const w = window.open('', '_blank'); w.document.write(html); w.document.close(); w.onload = () => w.print();
+    };
+    
+    // Carte
+    useEffect(() => {
+        if (showMap && selectedDef && mapContainerRef.current) {
+            if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
+            setTimeout(() => {
+                if (!mapContainerRef.current) return;
+                const map = L.map(mapContainerRef.current).setView([45.7772, 3.0870], 11);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM' }).addTo(map);
+                
+                const coords = [];
+                const lieuDepart = selectedLieuDepart || SIEGE_COORDS;
+                
+                // Marqueur départ
+                L.marker([lieuDepart.latitude, lieuDepart.longitude], {
+                    icon: L.divIcon({ className: 'custom-marker', html: `<div style="background:#EF4444;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.3)">🏢</div>`, iconSize: [28, 28], iconAnchor: [14, 14] })
+                }).addTo(map).bindPopup(`<strong>Départ:</strong> ${lieuDepart.nom}`);
+                coords.push([lieuDepart.latitude, lieuDepart.longitude]);
+                
+                selectedDef.equipements.forEach((eq, idx) => {
+                    const pos = getEquipementCoords(eq);
+                    const isManual = isWellGeolocated(eq);
+                    L.marker(pos, {
+                        icon: L.divIcon({ className: 'custom-marker', html: `<div style="background:${isManual ? COLORS.success : COLORS.primary};color:white;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:11px;border:2px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.3)">${idx + 1}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] })
+                    }).addTo(map).bindPopup(`<strong>${idx + 1}. ${eq.ascenseur}</strong><br/>${eq.adresse}, ${eq.ville}`);
+                    coords.push(pos);
+                });
+                
+                // Retour au départ
+                coords.push([lieuDepart.latitude, lieuDepart.longitude]);
+                
+                if (coords.length > 1) L.polyline(coords, { color: COLORS.primary, weight: 3, dashArray: '8,8' }).addTo(map);
+                map.fitBounds(coords, { padding: [30, 30] });
+                mapInstanceRef.current = map;
+            }, 100);
+        }
+        return () => { if (mapInstanceRef.current && !showMap) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; } };
+    }, [showMap, selectedDef, selectedLieuDepart, getEquipementCoords, isWellGeolocated]);
+    
+    // ========== UI ==========
+    
+    const cardStyle = { background: COLORS.card, borderRadius: 12, padding: 16, border: `1px solid ${COLORS.border}` };
     const weekDates = getWeekDates();
     
-    // ========== RENDER PLANNING ==========
-    const renderPlanning = () => h('div', null,
-        // Navigation semaine
-        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 } },
-            h('button', { className: 'btn btn-ghost', onClick: () => setSelectedWeek(w => w - 1) }, '← Semaine précédente'),
-            h('div', { style: { textAlign: 'center' } },
-                h('div', { style: { fontWeight: 600, fontSize: 16 } }, 
-                    `Semaine du ${weekDates[0].toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}`
-                ),
-                h('div', { style: { fontSize: 12, color: COLORS.muted } },
-                    selectedWeek === 0 ? '(Semaine actuelle)' : selectedWeek > 0 ? `(+${selectedWeek} sem.)` : `(${selectedWeek} sem.)`
-                )
-            ),
-            h('button', { className: 'btn btn-ghost', onClick: () => setSelectedWeek(w => w + 1) }, 'Semaine suivante →')
+    const getStatutBadge = (statut, joursRestants) => {
+        const s = { retard: { bg: COLORS.danger + '20', color: COLORS.danger, icon: '🔴', text: `Retard${joursRestants !== null ? ` (${Math.abs(joursRestants)}j)` : ''}` }, aplanifier: { bg: COLORS.warning + '20', color: COLORS.warning, icon: '🟠', text: `À planifier (${joursRestants}j)` }, ok: { bg: COLORS.success + '20', color: COLORS.success, icon: '✅', text: `OK (${joursRestants}j)` }, jamais: { bg: COLORS.purple + '20', color: COLORS.purple, icon: '❓', text: 'Jamais' } }[statut] || { bg: COLORS.muted + '20', color: COLORS.muted, icon: '❓', text: 'Inconnu' };
+        return { style: { padding: '4px 10px', background: s.bg, color: s.color, borderRadius: 20, fontSize: 11, fontWeight: 500 }, text: s.text, icon: s.icon };
+    };
+    
+    const getSecteurColor = (s) => techColors[(s || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % techColors.length];
+    
+    // ========== RENDER ==========
+    
+    const renderAPlanifier = () => h('div', null,
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 12, marginBottom: 20 } },
+            h('div', { style: { ...cardStyle, textAlign: 'center', borderLeft: `4px solid ${COLORS.danger}` } }, h('div', { style: { fontSize: 28, fontWeight: 700, color: COLORS.danger } }, stats.retard), h('div', { style: { fontSize: 11, color: COLORS.muted } }, '🔴 Retard')),
+            h('div', { style: { ...cardStyle, textAlign: 'center', borderLeft: `4px solid ${COLORS.warning}` } }, h('div', { style: { fontSize: 28, fontWeight: 700, color: COLORS.warning } }, stats.aplanifier), h('div', { style: { fontSize: 11, color: COLORS.muted } }, '🟠 À planifier')),
+            h('div', { style: { ...cardStyle, textAlign: 'center', borderLeft: `4px solid ${COLORS.purple}` } }, h('div', { style: { fontSize: 28, fontWeight: 700, color: COLORS.purple } }, stats.jamais), h('div', { style: { fontSize: 11, color: COLORS.muted } }, '❓ Jamais')),
+            h('div', { style: { ...cardStyle, textAlign: 'center', borderLeft: `4px solid ${COLORS.success}` } }, h('div', { style: { fontSize: 28, fontWeight: 700, color: COLORS.success } }, stats.ok), h('div', { style: { fontSize: 11, color: COLORS.muted } }, '✅ OK'))
         ),
         
-        // Grille planning
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 } },
-            weekDates.map((date, idx) => {
-                const jour = idx + 1;
-                const tourneesJour = tournees.filter(t => t.jour === jour);
-                const isToday = date.toDateString() === new Date().toDateString();
-                
-                return h('div', {
-                    key: jour,
-                    style: {
-                        ...cardStyle,
-                        minHeight: 320,
-                        background: isToday ? COLORS.primaryPastel : COLORS.card,
-                        borderColor: isToday ? COLORS.primary : COLORS.border
-                    },
-                    onDragOver: e => e.preventDefault(),
-                    onDrop: e => {
-                        e.preventDefault();
-                        if (draggedTournee) {
-                            updateTournee(draggedTournee.id, { jour, date: date.toISOString().split('T')[0] });
-                            setDraggedTournee(null);
-                        }
-                    }
-                },
-                    h('div', { style: { textAlign: 'center', marginBottom: 12, paddingBottom: 8, borderBottom: `1px solid ${COLORS.border}` } },
-                        h('div', { style: { fontWeight: 600, color: isToday ? COLORS.primary : COLORS.text } }, joursSemaine[jour]),
-                        h('div', { style: { fontSize: 12, color: COLORS.muted } }, date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }))
-                    ),
-                    
-                    tourneesJour.length === 0 
-                        ? h('div', { style: { textAlign: 'center', color: COLORS.muted, fontSize: 12, padding: 20 } }, 'Aucune tournée')
-                        : tourneesJour.map(tournee => h('div', {
-                            key: tournee.id,
-                            draggable: true,
-                            onDragStart: () => setDraggedTournee(tournee),
-                            onClick: () => setSelectedTournee(tournee),
-                            style: {
-                                padding: 10,
-                                background: (tournee.technicien?.couleur || COLORS.primary) + '15',
-                                borderLeft: `4px solid ${tournee.technicien?.couleur || COLORS.primary}`,
-                                borderRadius: 8,
-                                marginBottom: 8,
-                                cursor: 'pointer'
-                            }
-                        },
-                            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 6 } },
-                                h('span', { style: { fontWeight: 500, fontSize: 13 } }, tournee.nom),
-                                h('span', { style: badgeStyle(tournee.status === 'terminee' ? COLORS.success : COLORS.info) },
-                                    tournee.status === 'terminee' ? '✓' : '📅'
-                                )
-                            ),
-                            h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } },
-                                '👤 ', tournee.technicien?.name || 'Non assigné'
-                            ),
-                            h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } },
-                                '🕐 ', tournee.heure_debut, ' • ', (tournee.duree_estimee || tournee.equipementIds.length * DUREE_ENTRETIEN), ' min'
-                            ),
-                            h('div', { style: { fontSize: 11, color: COLORS.muted } },
-                                '🏢 ', tournee.equipementIds.length, ' équipements'
-                            )
-                        )),
-                    
-                    h('button', {
-                        onClick: () => {
-                            const newTournee = {
-                                id: 'new-' + Date.now(),
-                                nom: `Tournée - ${joursSemaine[jour]}`,
-                                date: date.toISOString().split('T')[0],
-                                jour,
-                                technicien: null,
-                                secteur: '',
-                                equipementIds: [],
-                                status: 'planifiee',
-                                heure_debut: '08:00',
-                                duree_estimee: 0
-                            };
-                            setTournees(prev => [...prev, newTournee]);
-                            setEditingTournee(newTournee);
-                        },
-                        style: {
-                            width: '100%', padding: 8, marginTop: 8,
-                            background: 'transparent', border: `1px dashed ${COLORS.border}`,
-                            borderRadius: 6, cursor: 'pointer', fontSize: 12, color: COLORS.muted
-                        }
-                    }, '+ Ajouter')
-                );
-            })
+        h('div', { style: { display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' } },
+            tourneesUrgentes.length > 0 && h('button', { className: 'btn btn-primary', onClick: () => { setSuggestions(genererSuggestions()); setSelectedSuggestions([]); setShowAutoPlan(true); } }, '🤖 Planif. auto (', tourneesUrgentes.length, ')'),
+            h('button', { className: 'btn btn-ghost', onClick: () => setShowAbsences(true) }, '📅 Absences'),
+            h('button', { className: 'btn btn-ghost', onClick: () => setShowLieuxDepart(true) }, '📍 Lieux départ'),
+            h('div', { style: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 } },
+                h('span', { style: { fontSize: 12, color: COLORS.muted } }, 'Départ:'),
+                h('select', { className: 'form-select', style: { maxWidth: 180, fontSize: 12 }, value: selectedLieuDepart?.id || '', onChange: e => {
+                    const lieu = lieuxDepart.find(l => l.id === e.target.value);
+                    setSelectedLieuDepart(lieu || null);
+                }},
+                    h('option', { value: '' }, '🏢 Siège (défaut)'),
+                    lieuxDepart.map(l => h('option', { key: l.id, value: l.id }, lieuTypes[l.type]?.icon || '📍', ' ', l.nom))
+                )
+            )
         ),
         
-        // Panneau détail tournée
-        selectedTournee && h('div', {
-            style: {
-                position: 'fixed', right: 0, top: 0, bottom: 0, width: 420,
-                background: COLORS.card, boxShadow: '-4px 0 20px rgba(0,0,0,0.1)',
-                padding: 20, overflowY: 'auto', zIndex: 100
-            }
-        },
-            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 } },
-                h('h3', { style: { fontSize: 16 } }, selectedTournee.nom),
-                h('button', { onClick: () => setSelectedTournee(null), style: { background: 'none', border: 'none', fontSize: 20, cursor: 'pointer' } }, '×')
-            ),
-            
-            // Infos
-            h('div', { style: { ...cardStyle, background: COLORS.background } },
-                h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 } },
-                    h('div', null,
-                        h('div', { style: { fontSize: 11, color: COLORS.muted } }, 'Date'),
-                        h('div', { style: { fontWeight: 500 } }, new Date(selectedTournee.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))
-                    ),
-                    h('div', null,
-                        h('div', { style: { fontSize: 11, color: COLORS.muted } }, 'Technicien'),
-                        h('div', { style: { fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6 } },
-                            h('span', { style: { width: 10, height: 10, borderRadius: '50%', background: selectedTournee.technicien?.couleur || COLORS.muted } }),
-                            selectedTournee.technicien?.name || 'Non assigné'
-                        )
-                    ),
-                    h('div', null,
-                        h('div', { style: { fontSize: 11, color: COLORS.muted } }, 'Durée estimée'),
-                        h('div', { style: { fontWeight: 500 } }, (selectedTournee.duree_estimee || selectedTournee.equipementIds.length * DUREE_ENTRETIEN), ' min')
-                    ),
-                    h('div', null,
-                        h('div', { style: { fontSize: 11, color: COLORS.muted } }, 'Secteur'),
-                        h('div', { style: { fontWeight: 500 } }, selectedTournee.secteur || '-')
-                    )
-                )
-            ),
-            
-            // Boutons rapides
-            h('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } },
-                h('button', {
-                    className: `btn btn-sm ${showMap ? 'btn-primary' : 'btn-ghost'}`,
-                    onClick: () => setShowMap(!showMap)
-                }, showMap ? '🗺️ Masquer carte' : '🗺️ Voir carte'),
-                h('button', {
-                    className: 'btn btn-sm btn-ghost',
-                    onClick: () => exportPDF(selectedTournee)
-                }, '📄 Feuille de route')
-            ),
-            
-            // Carte interactive
-            showMap && h('div', { style: { marginBottom: 16 } },
-                h('div', { 
-                    ref: mapContainerRef,
-                    style: { height: 250, borderRadius: 8, border: `1px solid ${COLORS.border}` }
-                })
-            ),
-            
-            // Liste équipements
-            h('div', { style: { marginBottom: 16 } },
-                h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 } },
-                    h('h4', { style: { fontSize: 14 } }, `🏢 Équipements (${selectedTournee.equipementIds.length})`),
-                    h('button', {
-                        onClick: () => optimiserItineraire(selectedTournee),
-                        className: 'btn btn-sm',
-                        style: { background: COLORS.info, color: 'white' }
-                    }, '🔄 Optimiser')
-                ),
-                h('div', { style: { maxHeight: 200, overflowY: 'auto' } },
-                    selectedTournee.equipementIds.map((eqId, idx) => {
-                        const eq = equipements.find(e => e.id_wsoucont === eqId);
-                        if (!eq) return null;
-                        const lastVisit = eq.dat_pass ? new Date(eq.dat_pass) : null;
-                        const joursDepuis = lastVisit ? Math.floor((new Date() - lastVisit) / (1000 * 60 * 60 * 24)) : null;
-                        
-                        return h('div', { key: eqId, style: { display: 'flex', alignItems: 'center', gap: 10, padding: 10, background: COLORS.background, borderRadius: 8, marginBottom: 6 } },
-                            h('span', { style: { width: 24, height: 24, borderRadius: '50%', background: COLORS.primary, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600 } }, idx + 1),
+        h('div', { style: { ...cardStyle, padding: 0, overflow: 'hidden' } },
+            h('div', { style: { padding: '12px 16px', background: COLORS.background, borderBottom: `1px solid ${COLORS.border}`, fontWeight: 600 } }, '⚠️ À planifier (', tourneesUrgentes.length, ')'),
+            tourneesUrgentes.length === 0
+                ? h('div', { style: { padding: 40, textAlign: 'center', color: COLORS.muted } }, '✅ Tout est à jour !')
+                : h('div', { style: { maxHeight: 500, overflowY: 'auto' } },
+                    tourneesUrgentes.map(def => {
+                        const badge = getStatutBadge(def.statut, def.joursRestants);
+                        return h('div', { key: def.id, style: { display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: `1px solid ${COLORS.border}`, cursor: 'pointer' }, onClick: () => setSelectedDef(def) },
+                            h('span', { style: badge.style }, badge.icon),
                             h('div', { style: { flex: 1 } },
-                                h('div', { style: { fontWeight: 500, fontSize: 13 } }, eq.ascenseur),
-                                h('div', { style: { fontSize: 11, color: COLORS.muted } }, eq.adresse, ', ', eq.ville)
+                                h('div', { style: { fontWeight: 500, marginBottom: 2 } }, def.nom),
+                                h('div', { style: { fontSize: 12, color: COLORS.muted } }, def.equipements.length, ' éq. • ', Math.round(def.dureeTotale / 60 * 10) / 10, 'h (🚗', def.trajets.total, 'min • ', def.trajets.distanceKm, 'km)')
                             ),
-                            joursDepuis !== null && h('span', { style: { fontSize: 11, color: joursDepuis > 45 ? COLORS.danger : COLORS.muted } }, joursDepuis, 'j')
+                            h('span', { style: { padding: '3px 8px', background: getFrequenceColor(def.visitesParAn) + '20', color: getFrequenceColor(def.visitesParAn), borderRadius: 12, fontSize: 10 } }, formatCycle(def.visitesParAn)),
+                            h('button', { className: 'btn btn-sm btn-primary', onClick: e => { e.stopPropagation(); setSelectedDef(def); setShowPlanifier(true); } }, '📅')
                         );
                     })
                 )
+        ),
+        selectedDef && !showPlanifier && renderDetailPanel()
+    );
+    
+    const renderDetailPanel = () => h('div', { style: { position: 'fixed', right: 0, top: 0, bottom: 0, width: 480, background: COLORS.card, boxShadow: '-4px 0 20px rgba(0,0,0,0.15)', padding: 20, overflowY: 'auto', zIndex: 100 } },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 } },
+            h('h3', { style: { fontSize: 16 } }, selectedDef.nom),
+            h('button', { onClick: () => { setSelectedDef(null); setShowMap(false); }, style: { background: 'none', border: 'none', fontSize: 20, cursor: 'pointer' } }, '×')
+        ),
+        
+        h('div', { style: { display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' } },
+            (() => { const b = getStatutBadge(selectedDef.statut, selectedDef.joursRestants); return h('span', { style: b.style }, b.icon, ' ', b.text); })(),
+            h('span', { style: { padding: '4px 10px', background: getFrequenceColor(selectedDef.visitesParAn) + '20', color: getFrequenceColor(selectedDef.visitesParAn), borderRadius: 20, fontSize: 11 } }, formatCycle(selectedDef.visitesParAn))
+        ),
+        
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 12 } },
+            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } }, h('div', { style: { fontSize: 11, color: COLORS.muted } }, 'Équipements'), h('div', { style: { fontSize: 18, fontWeight: 700 } }, selectedDef.equipements.length)),
+            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } }, h('div', { style: { fontSize: 11, color: COLORS.muted } }, 'Entretien'), h('div', { style: { fontSize: 18, fontWeight: 700 } }, Math.round(selectedDef.dureeEntretien / 60 * 10) / 10, 'h')),
+            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } }, h('div', { style: { fontSize: 11, color: COLORS.muted } }, 'Trajet'), h('div', { style: { fontSize: 18, fontWeight: 700 } }, selectedDef.trajets.total, 'min'))
+        ),
+        
+        h('div', { style: { padding: 12, background: COLORS.infoPastel, borderRadius: 8, marginBottom: 16, fontSize: 12 } },
+            h('div', null, '📍 Départ: ', selectedLieuDepart?.nom || 'Siège'),
+            h('div', null, '🚗 Aller: ', selectedDef.trajets.trajetAller, 'min • Inter: ', selectedDef.trajets.trajetInter, 'min • Retour: ', selectedDef.trajets.trajetRetour, 'min'),
+            h('div', null, '📏 Distance totale: ', selectedDef.trajets.distanceKm, ' km')
+        ),
+        
+        h('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } },
+            h('button', { className: 'btn btn-primary', style: { flex: 1 }, onClick: () => setShowPlanifier(true) }, '📅 Planifier'),
+            h('button', { className: `btn ${showMap ? 'btn-primary' : 'btn-ghost'}`, onClick: () => setShowMap(!showMap) }, '🗺️'),
+            h('button', { className: 'btn btn-ghost', onClick: () => exportPDF(selectedDef) }, '📄')
+        ),
+        
+        showMap && h('div', { ref: mapContainerRef, style: { height: 220, borderRadius: 8, marginBottom: 16, border: `1px solid ${COLORS.border}` } }),
+        
+        h('div', { style: { fontSize: 13, fontWeight: 500, marginBottom: 8 } }, '🏢 Équipements'),
+        h('div', { style: { maxHeight: 280, overflowY: 'auto' } },
+            selectedDef.equipements.map((eq, idx) => {
+                const joursDepuis = eq.dat_pass ? Math.floor((new Date() - new Date(eq.dat_pass)) / 86400000) : null;
+                const cycle = getCycleJours(getVisitesParAn(eq));
+                const enRetard = joursDepuis !== null && joursDepuis > cycle;
+                const hasCoords = isWellGeolocated(eq);
+                
+                return h('div', { key: eq.id || eq.id_wsoucont, style: { display: 'flex', alignItems: 'center', gap: 10, padding: 10, background: COLORS.background, borderRadius: 8, marginBottom: 6 } },
+                    h('span', { style: { width: 24, height: 24, borderRadius: '50%', background: COLORS.primary, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, flexShrink: 0 } }, idx + 1),
+                    h('div', { style: { flex: 1, minWidth: 0 } },
+                        h('div', { style: { fontWeight: 500, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, eq.ascenseur),
+                        h('div', { style: { fontSize: 11, color: COLORS.muted } }, eq.ville, ' • ', formatCycle(getVisitesParAn(eq)))
+                    ),
+                    h('button', { style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, opacity: hasCoords ? 1 : 0.5 }, onClick: () => { setCoordsEdit({ latitude: getEquipementCoords(eq)[0].toFixed(6), longitude: getEquipementCoords(eq)[1].toFixed(6) }); setShowEditCoords(eq); } }, hasCoords ? '✅' : '📍'),
+                    joursDepuis !== null && h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 10, background: enRetard ? COLORS.danger + '20' : COLORS.muted + '20', color: enRetard ? COLORS.danger : COLORS.muted } }, joursDepuis, 'j')
+                );
+            })
+        )
+    );
+    
+    const renderDefinitions = () => h('div', null,
+        h('div', { style: { display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' } },
+            h('select', { className: 'form-select', style: { maxWidth: 150 }, value: filterSecteur, onChange: e => setFilterSecteur(e.target.value) }, h('option', { value: '' }, 'Tous secteurs'), secteurs.map(s => h('option', { key: s, value: s }, s))),
+            h('select', { className: 'form-select', style: { maxWidth: 140 }, value: filterStatut, onChange: e => setFilterStatut(e.target.value) }, h('option', { value: '' }, 'Tous statuts'), h('option', { value: 'retard' }, '🔴 Retard'), h('option', { value: 'aplanifier' }, '🟠 À planifier'), h('option', { value: 'ok' }, '✅ OK'), h('option', { value: 'jamais' }, '❓ Jamais')),
+            h('select', { className: 'form-select', style: { maxWidth: 130 }, value: filterFrequence, onChange: e => setFilterFrequence(e.target.value) }, h('option', { value: '' }, 'Toutes fréq.'), frequences.map(f => h('option', { key: f, value: f }, formatCycle(f)))),
+            h('span', { style: { marginLeft: 'auto', color: COLORS.muted, fontSize: 13 } }, tourneesDefFiltered.length, ' tournée(s)')
+        ),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 } },
+            tourneesDefFiltered.map(def => {
+                const badge = getStatutBadge(def.statut, def.joursRestants);
+                return h('div', { key: def.id, style: { ...cardStyle, cursor: 'pointer', borderLeft: `4px solid ${getSecteurColor(def.secteur)}` }, onClick: () => setSelectedDef(def) },
+                    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 8 } },
+                        h('div', null, h('div', { style: { fontWeight: 600, fontSize: 14 } }, def.nom), h('div', { style: { fontSize: 12, color: COLORS.muted } }, def.equipements.length, ' éq. • ', Math.round(def.dureeTotale / 60 * 10) / 10, 'h')),
+                        h('div', { style: { display: 'flex', gap: 6 } }, h('span', { style: { padding: '3px 8px', background: getFrequenceColor(def.visitesParAn) + '20', color: getFrequenceColor(def.visitesParAn), borderRadius: 12, fontSize: 10 } }, formatCycle(def.visitesParAn)), h('span', { style: badge.style }, badge.icon))
+                    ),
+                    h('div', { style: { fontSize: 11, color: COLORS.muted } }, def.derniereVisite ? `Dern: ${def.derniereVisite.toLocaleDateString('fr-FR')}` : 'Jamais')
+                );
+            })
+        ),
+        selectedDef && !showPlanifier && renderDetailPanel()
+    );
+    
+    const renderPlanning = () => h('div', null,
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 } },
+            h('button', { className: 'btn btn-ghost', onClick: () => setSelectedWeek(w => w - 1) }, '←'),
+            h('div', { style: { textAlign: 'center' } }, h('div', { style: { fontWeight: 600 } }, 'Semaine du ', weekDates[0].toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })), selectedWeek === 0 && h('span', { style: { fontSize: 11, color: COLORS.primary } }, '(actuelle)')),
+            h('button', { className: 'btn btn-ghost', onClick: () => setSelectedWeek(w => w + 1) }, '→')
+        ),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 } },
+            weekDates.map((date, idx) => {
+                const dateStr = date.toISOString().split('T')[0];
+                const tourneesJour = tourneesPlanifiees.filter(t => t.date === dateStr);
+                const isToday = date.toDateString() === new Date().toDateString();
+                const indispo = getIndisponibiliteRaison(date);
+                const techsDispo = indispo ? [] : getTechniciensDisponibles(date);
+                
+                return h('div', { key: idx, style: { ...cardStyle, minHeight: 280, background: indispo ? (indispo.type === 'ferie' ? '#FEF3C7' : COLORS.background) : isToday ? COLORS.primaryPastel : COLORS.card, borderColor: isToday ? COLORS.primary : COLORS.border, opacity: indispo ? 0.8 : 1 } },
+                    h('div', { style: { textAlign: 'center', paddingBottom: 10, marginBottom: 10, borderBottom: `1px solid ${COLORS.border}` } },
+                        h('div', { style: { fontWeight: 600, color: isToday ? COLORS.primary : COLORS.text } }, joursComplets[date.getDay()]),
+                        h('div', { style: { fontSize: 12, color: COLORS.muted } }, date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })),
+                        indispo ? h('div', { style: { fontSize: 10, color: indispo.type === 'ferie' ? '#D97706' : COLORS.danger, marginTop: 4 } }, indispo.type === 'ferie' ? '🎉 ' : '', indispo.label)
+                            : h('div', { style: { fontSize: 10, color: COLORS.muted, marginTop: 4 } }, '👷 ', techsDispo.length, ' dispo')
+                    ),
+                    indispo
+                        ? h('div', { style: { textAlign: 'center', color: COLORS.muted, fontSize: 12, padding: 20 } }, indispo.type === 'ferie' ? 'Jour férié' : 'Indisponible')
+                        : tourneesJour.length === 0
+                            ? h('div', { style: { textAlign: 'center', color: COLORS.muted, fontSize: 12, padding: 20 } }, 'Aucune')
+                            : tourneesJour.map(t => {
+                                const tech = techniciens.find(x => x.id === t.technicien_id);
+                                return h('div', { key: t.id, onClick: () => setSelectedTournee(t), style: { padding: 10, background: (tech?.couleur || COLORS.primary) + '15', borderLeft: `4px solid ${tech?.couleur || COLORS.primary}`, borderRadius: 8, marginBottom: 8, cursor: 'pointer' } },
+                                    h('div', { style: { fontWeight: 500, fontSize: 13, marginBottom: 4 } }, t.nom),
+                                    h('div', { style: { fontSize: 11, color: COLORS.muted } }, '👤 ', tech?.name || '-'),
+                                    h('div', { style: { fontSize: 11, color: COLORS.muted } }, '🕐 ', t.heure_debut || '08:00', ' • ', Math.round((t.duree_estimee + (t.temps_trajet || 0)) / 60 * 10) / 10, 'h')
+                                );
+                            })
+                );
+            })
+        ),
+        selectedTournee && h('div', { style: { position: 'fixed', right: 0, top: 0, bottom: 0, width: 400, background: COLORS.card, boxShadow: '-4px 0 20px rgba(0,0,0,0.15)', padding: 20, overflowY: 'auto', zIndex: 100 } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 16 } }, h('h3', { style: { fontSize: 16 } }, selectedTournee.nom), h('button', { onClick: () => setSelectedTournee(null), style: { background: 'none', border: 'none', fontSize: 20, cursor: 'pointer' } }, '×')),
+            h('div', { style: { ...cardStyle, background: COLORS.background, marginBottom: 16 } },
+                h('div', { style: { marginBottom: 8 } }, h('span', { style: { fontSize: 11, color: COLORS.muted } }, 'Date: '), h('strong', null, new Date(selectedTournee.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))),
+                h('div', { style: { marginBottom: 8 } }, h('span', { style: { fontSize: 11, color: COLORS.muted } }, 'Technicien: '), h('strong', null, techniciens.find(t => t.id === selectedTournee.technicien_id)?.name || '-')),
+                h('div', null, h('span', { style: { fontSize: 11, color: COLORS.muted } }, 'Durée: '), h('strong', null, Math.round((selectedTournee.duree_estimee + (selectedTournee.temps_trajet || 0)) / 60 * 10) / 10, 'h'))
             ),
-            
-            // Suggestions intelligentes
-            h('div', { style: { marginBottom: 16 } },
-                h('button', {
-                    onClick: () => setShowSuggestions(!showSuggestions),
-                    style: { width: '100%', padding: 10, background: COLORS.purplePastel, border: 'none', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }
-                },
-                    h('span', { style: { fontWeight: 500, color: COLORS.purple } }, '💡 Suggestions intelligentes'),
-                    h('span', null, showSuggestions ? '▲' : '▼')
-                ),
-                showSuggestions && h('div', { style: { marginTop: 8 } },
-                    getSuggestions(selectedTournee).length === 0
-                        ? h('div', { style: { padding: 12, textAlign: 'center', color: COLORS.muted, fontSize: 12 } }, 'Aucune suggestion')
-                        : getSuggestions(selectedTournee).map(eq => {
-                            const lastVisit = eq.dat_pass ? new Date(eq.dat_pass) : null;
-                            const joursDepuis = lastVisit ? Math.floor((new Date() - lastVisit) / (1000 * 60 * 60 * 24)) : 999;
-                            return h('div', { key: eq.id_wsoucont, style: { display: 'flex', alignItems: 'center', gap: 10, padding: 10, background: COLORS.warningPastel, borderRadius: 8, marginBottom: 6 } },
-                                h('div', { style: { flex: 1 } },
-                                    h('div', { style: { fontWeight: 500, fontSize: 12 } }, eq.ascenseur, ' - ', eq.adresse),
-                                    h('div', { style: { fontSize: 11, color: COLORS.warning } },
-                                        joursDepuis > 45 ? '🚨 Urgent • ' : '', joursDepuis, 'j sans visite'
-                                    )
-                                ),
-                                h('button', {
-                                    onClick: () => {
-                                        const newIds = [...selectedTournee.equipementIds, eq.id_wsoucont];
-                                        updateTournee(selectedTournee.id, { equipementIds: newIds, duree_estimee: newIds.length * DUREE_ENTRETIEN });
-                                    },
-                                    style: { padding: '4px 10px', background: COLORS.success, color: 'white', border: 'none', borderRadius: 6, fontSize: 11, cursor: 'pointer' }
-                                }, '+ Ajouter')
-                            );
-                        })
-                )
-            ),
-            
-            // Gestion imprévus
-            h('div', { style: { marginBottom: 16 } },
-                h('button', {
-                    onClick: () => setShowImprevu(!showImprevu),
-                    style: { width: '100%', padding: 10, background: COLORS.dangerPastel, border: 'none', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }
-                },
-                    h('span', { style: { fontWeight: 500, color: COLORS.danger } }, '⚠️ Gérer un imprévu'),
-                    h('span', null, showImprevu ? '▲' : '▼')
-                ),
-                showImprevu && h('div', { style: { marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 } },
-                    h('button', { 
-                        className: 'btn btn-ghost btn-sm',
-                        onClick: () => {
-                            const newDate = new Date(selectedTournee.date);
-                            newDate.setDate(newDate.getDate() + 7);
-                            updateTournee(selectedTournee.id, { date: newDate.toISOString().split('T')[0], status: 'reportee' });
-                            showToast('Tournée reportée à la semaine prochaine', 'info');
-                        }
-                    }, '📅 Reporter (+7j)'),
-                    h('button', { 
-                        className: 'btn btn-ghost btn-sm',
-                        onClick: () => {
-                            if (selectedTournee.equipementIds.length > 0) {
-                                const newIds = selectedTournee.equipementIds.slice(0, -1);
-                                updateTournee(selectedTournee.id, { 
-                                    equipementIds: newIds,
-                                    duree_estimee: newIds.length * DUREE_ENTRETIEN
-                                });
-                                showToast('Dernier équipement marqué inaccessible', 'warning');
-                            }
-                        }
-                    }, '🔒 Site inaccessible'),
-                    h('button', { 
-                        className: 'btn btn-ghost btn-sm',
-                        onClick: () => setEditingTournee(selectedTournee)
-                    }, '👤 Changer tech.'),
-                    h('button', { 
-                        className: 'btn btn-ghost btn-sm',
-                        onClick: () => {
-                            setShowSuggestions(true);
-                            setShowImprevu(false);
-                        }
-                    }, '🚨 Ajouter urgence')
-                )
-            ),
-            
-            // Actions
             h('div', { style: { display: 'flex', gap: 8 } },
-                h('button', { 
-                    className: 'btn btn-primary', style: { flex: 1 },
-                    onClick: () => setEditingTournee(selectedTournee)
-                }, '✏️ Modifier'),
-                h('button', { 
-                    className: 'btn btn-ghost',
-                    style: { border: `1px solid ${COLORS.danger}`, color: COLORS.danger },
-                    onClick: () => {
-                        setTournees(prev => prev.filter(t => t.id !== selectedTournee.id));
-                        setSelectedTournee(null);
-                        showToast('Tournée supprimée', 'info');
-                    }
-                }, '🗑️')
+                h('button', { className: 'btn btn-ghost', style: { flex: 1 }, onClick: () => { const def = tourneesDef.find(d => d.secteur === selectedTournee.secteur && d.ordre === selectedTournee.ordre); if (def) exportPDF(def, selectedTournee); } }, '📄 Feuille'),
+                h('button', { className: 'btn', style: { background: COLORS.danger, color: 'white' }, onClick: () => { if (confirm('Supprimer ?')) supprimerTournee(selectedTournee.id); } }, '🗑️')
             )
         )
     );
     
-    // ========== RENDER TEMPLATES ==========
-    const renderTemplates = () => h('div', null,
-        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 } },
-            h('div', null,
-                h('h3', { style: { fontSize: 16, marginBottom: 4 } }, '📋 Templates de tournées'),
-                h('p', { style: { fontSize: 12, color: COLORS.muted } }, 'Modèles récurrents sur 1 semaine • Durée: ', DUREE_ENTRETIEN, ' min/équipement')
-            ),
-            h('button', { 
-                className: 'btn btn-primary',
-                onClick: () => setEditingTournee({ 
-                    isTemplate: true, 
-                    nom: '', 
-                    jour_semaine: 1, 
-                    secteur: '', 
-                    technicien_id: null, 
-                    recurrence: 'hebdo',
-                    equipement_ids: [],
-                    heure_debut: '08:00'
-                })
-            }, '+ Nouveau template')
-        ),
-        
-        templates.length === 0 
-            ? h('div', { style: { ...cardStyle, textAlign: 'center', padding: 40 } },
-                h('div', { style: { fontSize: 48, marginBottom: 16 } }, '📋'),
-                h('p', { style: { color: COLORS.muted } }, 'Aucun template configuré'),
-                h('p', { style: { fontSize: 12, color: COLORS.muted } }, 'Créez des templates pour générer automatiquement les tournées chaque semaine')
-            )
-            : h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: 16 } },
-                templates.map(template => {
-                    const tech = techniciens.find(t => t.id === template.technicien_id);
-                    const eqIds = template.equipement_ids ? (typeof template.equipement_ids === 'string' ? JSON.parse(template.equipement_ids) : template.equipement_ids) : [];
-                    const eqs = eqIds.map(id => equipements.find(e => e.id_wsoucont === id)).filter(Boolean);
-                    
-                    return h('div', { key: template.id, style: { ...cardStyle, borderLeft: `4px solid ${tech?.couleur || COLORS.primary}` } },
-                        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 12 } },
-                            h('div', null,
-                                h('h4', { style: { fontSize: 14, marginBottom: 4 } }, template.nom),
-                                h('span', { style: badgeStyle(COLORS.info) }, template.recurrence === 'hebdo' ? 'Hebdomadaire' : 'Bi-hebdomadaire')
-                            ),
-                            h('button', { 
-                                className: 'btn btn-ghost btn-sm',
-                                onClick: () => setEditingTournee({ ...template, isTemplate: true, equipement_ids: eqIds })
-                            }, '✏️')
-                        ),
-                        h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 } },
-                            h('div', { style: { padding: 8, background: COLORS.background, borderRadius: 6 } },
-                                h('div', { style: { fontSize: 10, color: COLORS.muted } }, 'Jour'),
-                                h('div', { style: { fontWeight: 500, fontSize: 13 } }, joursSemaine[template.jour_semaine])
-                            ),
-                            h('div', { style: { padding: 8, background: COLORS.background, borderRadius: 6 } },
-                                h('div', { style: { fontSize: 10, color: COLORS.muted } }, 'Secteur'),
-                                h('div', { style: { fontWeight: 500, fontSize: 13 } }, template.secteur || '-')
-                            ),
-                            h('div', { style: { padding: 8, background: COLORS.background, borderRadius: 6 } },
-                                h('div', { style: { fontSize: 10, color: COLORS.muted } }, 'Technicien'),
-                                h('div', { style: { fontWeight: 500, fontSize: 13, display: 'flex', alignItems: 'center', gap: 4 } },
-                                    h('span', { style: { width: 8, height: 8, borderRadius: '50%', background: tech?.couleur || COLORS.muted } }),
-                                    tech?.name || 'Non assigné'
-                                )
-                            ),
-                            h('div', { style: { padding: 8, background: COLORS.background, borderRadius: 6 } },
-                                h('div', { style: { fontSize: 10, color: COLORS.muted } }, 'Durée'),
-                                h('div', { style: { fontWeight: 500, fontSize: 13 } }, eqIds.length * DUREE_ENTRETIEN, ' min')
-                            )
-                        ),
-                        h('div', { style: { fontSize: 12, color: COLORS.muted, marginBottom: 8 } }, '🏢 ', eqIds.length, ' équipements'),
-                        eqs.length > 0 && h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
-                            eqs.slice(0, 5).map(eq => h('span', { key: eq.id_wsoucont, style: { padding: '4px 8px', background: COLORS.background, borderRadius: 4, fontSize: 11 } }, eq.ascenseur)),
-                            eqs.length > 5 && h('span', { style: { padding: '4px 8px', background: COLORS.background, borderRadius: 4, fontSize: 11, color: COLORS.muted } }, '+', eqs.length - 5)
-                        )
-                    );
-                })
-            )
-    );
-    
-    // ========== RENDER TECHNICIENS ==========
     const renderTechniciens = () => h('div', null,
-        h('div', { style: { marginBottom: 20 } },
-            h('h3', { style: { fontSize: 16, marginBottom: 4 } }, '👷 Gestion des techniciens'),
-            h('p', { style: { fontSize: 12, color: COLORS.muted } }, 'Charge de travail et disponibilités')
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 } },
+            h('div', null, h('h3', { style: { fontSize: 16, marginBottom: 4 } }, '👷 Techniciens'), h('p', { style: { fontSize: 12, color: COLORS.muted } }, 'Charge et absences')),
+            h('div', { style: { display: 'flex', gap: 8 } }, h('button', { className: 'btn btn-ghost', onClick: () => setShowAbsences(true) }, '📅 Absences'), h('button', { className: 'btn btn-ghost', onClick: () => setShowLieuxDepart(true) }, '📍 Lieux'))
         ),
-        
         techniciens.length === 0
-            ? h('div', { style: { ...cardStyle, textAlign: 'center', padding: 40 } },
-                h('div', { style: { fontSize: 48, marginBottom: 16 } }, '👷'),
-                h('p', { style: { color: COLORS.muted } }, 'Aucun technicien trouvé'),
-                h('p', { style: { fontSize: 12, color: COLORS.muted } }, 'Les utilisateurs avec le rôle "technicien" ou "admin" apparaîtront ici')
-            )
-            : h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 } },
+            ? h('div', { style: { ...cardStyle, textAlign: 'center', padding: 40 } }, '👷 Aucun technicien')
+            : h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 } },
                 techniciens.map(tech => {
-                    const tourneestech = tournees.filter(t => t.technicien_id === tech.id || t.technicien?.id === tech.id);
-                    const heuresPlannifiees = tourneestech.reduce((sum, t) => sum + (t.duree_estimee || t.equipementIds.length * DUREE_ENTRETIEN), 0) / 60;
-                    const heuresSemaine = 35;
-                    const chargePercent = (heuresPlannifiees / heuresSemaine) * 100;
+                    const tourneesTech = tourneesPlanifiees.filter(t => t.technicien_id === tech.id);
+                    const absencesTech = absences.filter(a => a.technicien_id === tech.id);
+                    const lieuDepart = getLieuDepartTechnicien(tech.id);
+                    const heures = tourneesTech.reduce((s, t) => s + (t.duree_estimee + (t.temps_trajet || 0)) / 60, 0);
+                    const charge = Math.min(100, (heures / 35) * 100);
                     
                     return h('div', { key: tech.id, style: { ...cardStyle, borderTop: `4px solid ${tech.couleur}` } },
-                        h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 } },
-                            h('div', { style: { width: 48, height: 48, borderRadius: '50%', background: tech.couleur + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 } }, '👷'),
-                            h('div', null,
-                                h('h4', { style: { fontSize: 14, marginBottom: 2 } }, tech.name || 'Technicien'),
-                                h('div', { style: { display: 'flex', gap: 4 } },
-                                    (tech.secteurs || []).map(s => h('span', { key: s, style: { fontSize: 10, padding: '2px 6px', background: COLORS.background, borderRadius: 4 } }, s))
-                                )
-                            )
+                        h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 } },
+                            h('div', { style: { width: 40, height: 40, borderRadius: '50%', background: tech.couleur + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 } }, '👷'),
+                            h('div', { style: { flex: 1 } }, h('div', { style: { fontWeight: 600 } }, tech.name), h('div', { style: { fontSize: 11, color: COLORS.muted } }, '📍 ', lieuDepart.nom))
                         ),
-                        
-                        // Charge de travail
-                        h('div', { style: { marginBottom: 16 } },
-                            h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 } },
-                                h('span', null, 'Charge semaine'),
-                                h('span', { style: { fontWeight: 500 } }, heuresPlannifiees.toFixed(1), 'h / ', heuresSemaine, 'h')
-                            ),
-                            h('div', { style: { height: 8, background: COLORS.background, borderRadius: 4, overflow: 'hidden' } },
-                                h('div', { style: {
-                                    height: '100%',
-                                    width: `${Math.min(chargePercent, 100)}%`,
-                                    background: chargePercent > 90 ? COLORS.danger : chargePercent > 70 ? COLORS.warning : COLORS.success,
-                                    borderRadius: 4
-                                } })
-                            ),
-                            h('div', { style: { fontSize: 11, color: COLORS.muted, marginTop: 4 } },
-                                chargePercent < 70 ? '✅ Disponible' : chargePercent < 90 ? '⚠️ Charge normale' : '🔴 Surchargé'
-                            )
+                        h('div', { style: { marginBottom: 12 } },
+                            h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 } }, h('span', null, 'Charge sem.'), h('span', null, heures.toFixed(1), 'h / 35h')),
+                            h('div', { style: { height: 6, background: COLORS.background, borderRadius: 3 } }, h('div', { style: { height: '100%', width: `${charge}%`, background: charge > 90 ? COLORS.danger : charge > 70 ? COLORS.warning : COLORS.success, borderRadius: 3 } }))
                         ),
-                        
-                        // Tournées de la semaine
-                        h('div', { style: { fontSize: 12, color: COLORS.muted, marginBottom: 8 } },
-                            '📅 Cette semaine (', tourneestech.length, ' tournées)'
-                        ),
-                        tourneestech.length === 0
-                            ? h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 6, fontSize: 12, color: COLORS.muted, textAlign: 'center' } }, 'Aucune tournée')
-                            : tourneestech.slice(0, 3).map(t => h('div', { key: t.id, style: { padding: 8, background: COLORS.background, borderRadius: 6, marginBottom: 4, fontSize: 12 } },
-                                h('div', { style: { fontWeight: 500 } }, joursShort[t.jour], ' - ', t.nom),
-                                h('div', { style: { color: COLORS.muted } }, t.equipementIds.length, ' éq. • ', (t.duree_estimee || t.equipementIds.length * DUREE_ENTRETIEN), ' min')
-                            ))
+                        absencesTech.length > 0 && h('div', { style: { fontSize: 11, marginBottom: 8 } },
+                            h('div', { style: { fontWeight: 500, marginBottom: 4 } }, '📅 Absences'),
+                            absencesTech.slice(0, 2).map(a => h('div', { key: a.id, style: { padding: 4, background: absenceTypes[a.type]?.color + '15', borderRadius: 4, marginBottom: 2 } }, absenceTypes[a.type]?.icon, ' ', new Date(a.date_debut).toLocaleDateString('fr-FR'), ' → ', new Date(a.date_fin).toLocaleDateString('fr-FR')))
+                        )
                     );
                 })
             )
     );
     
-    // ========== MODAL EDITION ==========
-    const renderEditModal = () => {
-        if (!editingTournee) return null;
-        const isTemplate = editingTournee.isTemplate;
-        
-        return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 } },
-            h('div', { style: { background: COLORS.card, borderRadius: 16, padding: 24, width: 550, maxWidth: '95%', maxHeight: '90vh', overflowY: 'auto' } },
-                h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 } },
-                    h('h3', null, isTemplate ? (editingTournee.id ? '✏️ Modifier template' : '➕ Nouveau template') : '✏️ Modifier tournée'),
-                    h('button', { onClick: () => setEditingTournee(null), style: { background: 'none', border: 'none', fontSize: 20, cursor: 'pointer' } }, '×')
-                ),
-                
-                h('div', { style: { marginBottom: 16 } },
-                    h('label', { style: { display: 'block', fontSize: 12, color: COLORS.muted, marginBottom: 4 } }, 'Nom'),
-                    h('input', {
-                        type: 'text', className: 'form-control',
-                        value: editingTournee.nom || '',
-                        onChange: e => setEditingTournee({ ...editingTournee, nom: e.target.value }),
-                        placeholder: isTemplate ? 'Ex: Tournée S01 - Lundi' : 'Nom de la tournée'
+    // MODALS
+    const renderModalPlanifier = () => showPlanifier && selectedDef && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 } },
+        h('div', { style: { background: COLORS.card, borderRadius: 16, padding: 24, width: 460, maxWidth: '95%' } },
+            h('h3', { style: { marginBottom: 16 } }, '📅 Planifier ', selectedDef.nom),
+            
+            h('div', { style: { marginBottom: 12 } },
+                h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Date *'),
+                h('input', { type: 'date', className: 'form-control', value: planifierData.date, onChange: e => setPlanifierData({ ...planifierData, date: e.target.value }) }),
+                planifierData.date && (() => {
+                    const d = new Date(planifierData.date);
+                    const indispo = getIndisponibiliteRaison(d);
+                    if (indispo) return h('div', { style: { fontSize: 11, color: COLORS.danger, marginTop: 4 } }, '⚠️ ', indispo.label);
+                    return h('div', { style: { fontSize: 11, color: COLORS.success, marginTop: 4 } }, '✅ ', getTechniciensDisponibles(d).length, ' technicien(s) disponible(s)');
+                })()
+            ),
+            h('div', { style: { marginBottom: 12 } },
+                h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Technicien'),
+                h('select', { className: 'form-select', value: planifierData.technicien_id, onChange: e => setPlanifierData({ ...planifierData, technicien_id: e.target.value }) },
+                    h('option', { value: '' }, 'Non assigné'),
+                    techniciens.map(t => {
+                        const absent = planifierData.date && isTechnicienAbsent(t.id, new Date(planifierData.date));
+                        return h('option', { key: t.id, value: t.id, disabled: !!absent }, t.name, absent ? ` (${absenceTypes[absent.type]?.label})` : '');
                     })
-                ),
-                
-                h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 } },
-                    h('div', null,
-                        h('label', { style: { display: 'block', fontSize: 12, color: COLORS.muted, marginBottom: 4 } }, isTemplate ? 'Jour de la semaine' : 'Date'),
-                        isTemplate 
-                            ? h('select', {
-                                className: 'form-select',
-                                value: editingTournee.jour_semaine || 1,
-                                onChange: e => setEditingTournee({ ...editingTournee, jour_semaine: parseInt(e.target.value) })
-                            },
-                                [1,2,3,4,5].map(j => h('option', { key: j, value: j }, joursSemaine[j]))
-                            )
-                            : h('input', {
-                                type: 'date', className: 'form-control',
-                                value: editingTournee.date || '',
-                                onChange: e => setEditingTournee({ ...editingTournee, date: e.target.value })
-                            })
-                    ),
-                    h('div', null,
-                        h('label', { style: { display: 'block', fontSize: 12, color: COLORS.muted, marginBottom: 4 } }, 'Heure début'),
-                        h('input', {
-                            type: 'time', className: 'form-control',
-                            value: editingTournee.heure_debut || '08:00',
-                            onChange: e => setEditingTournee({ ...editingTournee, heure_debut: e.target.value })
-                        })
-                    )
-                ),
-                
-                h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 } },
-                    h('div', null,
-                        h('label', { style: { display: 'block', fontSize: 12, color: COLORS.muted, marginBottom: 4 } }, 'Technicien'),
-                        h('select', {
-                            className: 'form-select',
-                            value: editingTournee.technicien_id || editingTournee.technicien?.id || '',
-                            onChange: e => {
-                                const tech = techniciens.find(t => t.id === e.target.value);
-                                setEditingTournee({ ...editingTournee, technicien_id: e.target.value, technicien: tech });
-                            }
-                        },
-                            h('option', { value: '' }, 'Sélectionner...'),
-                            techniciens.map(t => h('option', { key: t.id, value: t.id }, t.name))
-                        )
-                    ),
-                    h('div', null,
-                        h('label', { style: { display: 'block', fontSize: 12, color: COLORS.muted, marginBottom: 4 } }, 'Secteur'),
-                        h('select', {
-                            className: 'form-select',
-                            value: editingTournee.secteur || '',
-                            onChange: e => setEditingTournee({ ...editingTournee, secteur: e.target.value })
-                        },
-                            h('option', { value: '' }, 'Tous secteurs'),
-                            [...new Set(equipements.map(e => e.secteur).filter(Boolean))].sort().map(s => 
-                                h('option', { key: s, value: s }, s)
-                            )
-                        )
-                    )
-                ),
-                
-                isTemplate && h('div', { style: { marginBottom: 16 } },
-                    h('label', { style: { display: 'block', fontSize: 12, color: COLORS.muted, marginBottom: 4 } }, 'Récurrence'),
-                    h('div', { style: { display: 'flex', gap: 8 } },
-                        ['hebdo', 'bi-hebdo'].map(r => h('label', { key: r, style: { display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', background: editingTournee.recurrence === r ? COLORS.primaryPastel : COLORS.background, borderRadius: 8, cursor: 'pointer' } },
-                            h('input', { type: 'radio', name: 'recurrence', value: r, checked: editingTournee.recurrence === r, onChange: () => setEditingTournee({ ...editingTournee, recurrence: r }) }),
-                            r === 'hebdo' ? 'Hebdomadaire' : 'Bi-hebdomadaire'
-                        ))
-                    )
-                ),
-                
-                h('div', { style: { marginBottom: 16 } },
-                    h('label', { style: { display: 'block', fontSize: 12, color: COLORS.muted, marginBottom: 8 } }, 'Équipements'),
-                    h('div', { style: { maxHeight: 250, overflowY: 'auto', border: `1px solid ${COLORS.border}`, borderRadius: 8 } },
-                        equipements
-                            .filter(eq => !editingTournee.secteur || eq.secteur === editingTournee.secteur)
-                            .slice(0, 100)
-                            .map(eq => {
-                                const ids = isTemplate ? (editingTournee.equipement_ids || []) : (editingTournee.equipementIds || []);
-                                const isSelected = ids.includes(eq.id_wsoucont);
-                                return h('label', { key: eq.id_wsoucont, style: { display: 'flex', alignItems: 'center', gap: 8, padding: 10, borderBottom: `1px solid ${COLORS.border}`, cursor: 'pointer', background: isSelected ? COLORS.successPastel : 'transparent' } },
-                                    h('input', {
-                                        type: 'checkbox',
-                                        checked: isSelected,
-                                        onChange: e => {
-                                            const key = isTemplate ? 'equipement_ids' : 'equipementIds';
-                                            const newIds = e.target.checked
-                                                ? [...ids, eq.id_wsoucont]
-                                                : ids.filter(id => id !== eq.id_wsoucont);
-                                            setEditingTournee({ ...editingTournee, [key]: newIds, duree_estimee: newIds.length * DUREE_ENTRETIEN });
-                                        }
-                                    }),
-                                    h('div', { style: { flex: 1 } },
-                                        h('div', { style: { fontSize: 13, fontWeight: 500 } }, eq.ascenseur),
-                                        h('div', { style: { fontSize: 11, color: COLORS.muted } }, eq.adresse, ', ', eq.ville, ' • ', eq.secteur)
-                                    )
-                                );
-                            })
-                    )
-                ),
-                
-                h('div', { style: { background: COLORS.background, padding: 12, borderRadius: 8, marginBottom: 16 } },
-                    h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 13 } },
-                        h('span', null, 'Équipements sélectionnés:'),
-                        h('strong', null, (isTemplate ? editingTournee.equipement_ids : editingTournee.equipementIds)?.length || 0)
-                    ),
-                    h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 13 } },
-                        h('span', null, 'Durée estimée:'),
-                        h('strong', null, ((isTemplate ? editingTournee.equipement_ids : editingTournee.equipementIds)?.length || 0) * DUREE_ENTRETIEN, ' min')
-                    )
-                ),
-                
-                h('div', { style: { display: 'flex', gap: 8 } },
-                    h('button', { className: 'btn btn-ghost', style: { flex: 1 }, onClick: () => setEditingTournee(null) }, 'Annuler'),
-                    h('button', { 
-                        className: 'btn btn-primary', style: { flex: 1 },
-                        onClick: () => {
-                            if (isTemplate) {
-                                saveTemplate(editingTournee);
-                            } else {
-                                updateTournee(editingTournee.id, editingTournee);
-                                saveTournee(editingTournee);
-                            }
-                            setEditingTournee(null);
-                        }
-                    }, 'Enregistrer')
                 )
+            ),
+            h('div', { style: { marginBottom: 12 } },
+                h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Lieu de départ'),
+                h('select', { className: 'form-select', value: planifierData.lieu_depart_id, onChange: e => setPlanifierData({ ...planifierData, lieu_depart_id: e.target.value }) },
+                    h('option', { value: '' }, '🏢 Par défaut (', getLieuDepartTechnicien(planifierData.technicien_id).nom, ')'),
+                    lieuxDepart.map(l => h('option', { key: l.id, value: l.id }, lieuTypes[l.type]?.icon, ' ', l.nom))
+                )
+            ),
+            h('div', { style: { marginBottom: 16 } },
+                h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Heure'),
+                h('input', { type: 'time', className: 'form-control', value: planifierData.heure_debut, onChange: e => setPlanifierData({ ...planifierData, heure_debut: e.target.value }) })
+            ),
+            
+            (() => {
+                const lieu = planifierData.lieu_depart_id ? lieuxDepart.find(l => l.id === planifierData.lieu_depart_id) : getLieuDepartTechnicien(planifierData.technicien_id);
+                const trajets = calculerTempsTrajet(selectedDef.equipements, lieu);
+                return h('div', { style: { padding: 12, background: COLORS.infoPastel, borderRadius: 8, marginBottom: 16, fontSize: 12 } },
+                    h('div', null, '📍 Départ: ', lieu?.nom || 'Siège'),
+                    h('div', null, '🚗 Trajet: ', trajets.total, 'min (', trajets.distanceKm, 'km)'),
+                    h('div', null, '⏱️ Durée totale: ', Math.round((selectedDef.dureeEntretien + trajets.total) / 60 * 10) / 10, 'h')
+                );
+            })(),
+            
+            h('div', { style: { display: 'flex', gap: 8 } },
+                h('button', { className: 'btn btn-ghost', style: { flex: 1 }, onClick: () => { setShowPlanifier(false); setPlanifierData({ date: '', technicien_id: '', heure_debut: '08:00', lieu_depart_id: '' }); } }, 'Annuler'),
+                h('button', { className: 'btn btn-primary', style: { flex: 1 }, onClick: planifierTournee }, 'Planifier')
             )
-        );
-    };
+        )
+    );
     
-    // ========== RENDER MAIN ==========
-    if (loading) {
-        return h('div', { style: { textAlign: 'center', padding: 60 } },
-            h('div', { className: 'loading-spinner', style: { marginBottom: 16 } }),
-            h('p', { style: { color: COLORS.muted } }, 'Chargement des tournées...')
-        );
-    }
+    const renderModalAutoPlan = () => showAutoPlan && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 } },
+        h('div', { style: { background: COLORS.card, borderRadius: 16, padding: 24, width: 750, maxWidth: '95%', maxHeight: '90vh', overflowY: 'auto' } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 16 } }, h('h3', null, '🤖 Planification Intelligente'), h('button', { onClick: () => setShowAutoPlan(false), style: { background: 'none', border: 'none', fontSize: 20, cursor: 'pointer' } }, '×')),
+            h('div', { style: { padding: 12, background: COLORS.infoPastel, borderRadius: 8, marginBottom: 16, fontSize: 12 } },
+                h('div', null, '📅 Exclusion: week-ends, ', joursFeries.length, ' jours fériés, absences'),
+                h('div', null, '📍 Lieu de départ personnalisé par technicien'),
+                h('div', null, '🚗 Temps de trajet inclus (aller + inter + retour)')
+            ),
+            suggestions.length === 0
+                ? h('div', { style: { textAlign: 'center', padding: 40 } }, '✅ Aucune tournée à planifier')
+                : h('div', null,
+                    h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 12 } },
+                        h('label', { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 } }, h('input', { type: 'checkbox', checked: selectedSuggestions.length === suggestions.length, onChange: e => setSelectedSuggestions(e.target.checked ? suggestions.map((_, i) => i) : []) }), 'Tout (', selectedSuggestions.length, '/', suggestions.length, ')'),
+                        h('span', { style: { fontSize: 12, color: COLORS.muted } }, Math.round(suggestions.filter((_, i) => selectedSuggestions.includes(i)).reduce((s, x) => s + x.tournee.dureeTotale, 0) / 60 * 10) / 10, 'h total')
+                    ),
+                    h('div', { style: { maxHeight: 400, overflowY: 'auto', marginBottom: 16 } },
+                        suggestions.map((sugg, idx) => {
+                            const sel = selectedSuggestions.includes(idx);
+                            const dateObj = new Date(sugg.date);
+                            const badge = getStatutBadge(sugg.tournee.statut, sugg.tournee.joursRestants);
+                            return h('div', { key: idx, style: { display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: sel ? COLORS.primaryPastel : COLORS.background, borderRadius: 8, marginBottom: 8, cursor: 'pointer', border: sel ? `2px solid ${COLORS.primary}` : '2px solid transparent' }, onClick: () => setSelectedSuggestions(s => s.includes(idx) ? s.filter(i => i !== idx) : [...s, idx]) },
+                                h('input', { type: 'checkbox', checked: sel, onChange: () => {} }),
+                                h('div', { style: { flex: 1 } },
+                                    h('div', { style: { fontWeight: 500, marginBottom: 4 } }, sugg.tournee.nom),
+                                    h('div', { style: { fontSize: 12, color: COLORS.muted } }, sugg.tournee.equipements.length, ' éq. • ', Math.round(sugg.tournee.dureeTotale / 60 * 10) / 10, 'h • 📍', sugg.lieuDepart?.nom || 'Siège')
+                                ),
+                                h('div', { style: { textAlign: 'right' } },
+                                    h('div', { style: { fontWeight: 600, color: COLORS.primary } }, joursComplets[dateObj.getDay()], ' ', dateObj.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })),
+                                    h('div', { style: { fontSize: 11, color: COLORS.muted } }, '👤 ', sugg.technicien?.name || '-')
+                                ),
+                                h('span', { style: { ...badge.style, fontSize: 10 } }, badge.icon)
+                            );
+                        })
+                    ),
+                    h('div', { style: { display: 'flex', gap: 8 } },
+                        h('button', { className: 'btn btn-ghost', style: { flex: 1 }, onClick: () => setShowAutoPlan(false) }, 'Annuler'),
+                        h('button', { className: 'btn btn-primary', style: { flex: 1 }, disabled: selectedSuggestions.length === 0, onClick: () => planifierEnLot(suggestions.filter((_, i) => selectedSuggestions.includes(i))) }, '📅 Planifier ', selectedSuggestions.length)
+                    )
+                )
+        )
+    );
+    
+    const renderModalAbsences = () => showAbsences && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 } },
+        h('div', { style: { background: COLORS.card, borderRadius: 16, padding: 24, width: 600, maxWidth: '95%', maxHeight: '90vh', overflowY: 'auto' } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 16 } }, h('h3', null, '📅 Absences'), h('button', { onClick: () => setShowAbsences(false), style: { background: 'none', border: 'none', fontSize: 20, cursor: 'pointer' } }, '×')),
+            h('div', { style: { ...cardStyle, marginBottom: 16 } },
+                h('div', { style: { fontWeight: 500, marginBottom: 12 } }, '➕ Nouvelle'),
+                h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 } },
+                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Technicien'), h('select', { className: 'form-select', value: absenceForm.technicien_id, onChange: e => setAbsenceForm({ ...absenceForm, technicien_id: e.target.value }) }, h('option', { value: '' }, 'Sélectionner...'), techniciens.map(t => h('option', { key: t.id, value: t.id }, t.name)))),
+                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Type'), h('select', { className: 'form-select', value: absenceForm.type, onChange: e => setAbsenceForm({ ...absenceForm, type: e.target.value }) }, Object.entries(absenceTypes).map(([k, v]) => h('option', { key: k, value: k }, v.icon, ' ', v.label)))),
+                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Du'), h('input', { type: 'date', className: 'form-control', value: absenceForm.date_debut, onChange: e => setAbsenceForm({ ...absenceForm, date_debut: e.target.value }) })),
+                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Au'), h('input', { type: 'date', className: 'form-control', value: absenceForm.date_fin, onChange: e => setAbsenceForm({ ...absenceForm, date_fin: e.target.value }) }))
+                ),
+                h('button', { className: 'btn btn-primary', style: { marginTop: 12 }, onClick: ajouterAbsence }, '➕ Ajouter')
+            ),
+            h('div', { style: { fontWeight: 500, marginBottom: 8 } }, '📋 Liste (', absences.length, ')'),
+            absences.length === 0
+                ? h('div', { style: { textAlign: 'center', color: COLORS.muted, padding: 20 } }, 'Aucune')
+                : h('div', { style: { maxHeight: 300, overflowY: 'auto' } },
+                    absences.map(a => h('div', { key: a.id, style: { display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: COLORS.background, borderRadius: 8, marginBottom: 8, borderLeft: `4px solid ${absenceTypes[a.type]?.color}` } },
+                        h('span', { style: { fontSize: 20 } }, absenceTypes[a.type]?.icon),
+                        h('div', { style: { flex: 1 } }, h('div', { style: { fontWeight: 500 } }, techniciens.find(t => t.id === a.technicien_id)?.name || '-'), h('div', { style: { fontSize: 12, color: COLORS.muted } }, new Date(a.date_debut).toLocaleDateString('fr-FR'), ' → ', new Date(a.date_fin).toLocaleDateString('fr-FR'))),
+                        h('button', { className: 'btn btn-sm', style: { background: COLORS.danger + '20', color: COLORS.danger }, onClick: () => supprimerAbsence(a.id) }, '🗑️')
+                    ))
+                )
+        )
+    );
+    
+    const renderModalLieuxDepart = () => showLieuxDepart && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 } },
+        h('div', { style: { background: COLORS.card, borderRadius: 16, padding: 24, width: 650, maxWidth: '95%', maxHeight: '90vh', overflowY: 'auto' } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 16 } }, h('h3', null, '📍 Lieux de départ'), h('button', { onClick: () => setShowLieuxDepart(false), style: { background: 'none', border: 'none', fontSize: 20, cursor: 'pointer' } }, '×')),
+            
+            h('div', { style: { padding: 12, background: COLORS.infoPastel, borderRadius: 8, marginBottom: 16, fontSize: 12 } },
+                h('div', null, '💡 Le lieu de départ permet de calculer le temps de trajet réel'),
+                h('div', null, '🏠 Chaque technicien peut avoir son lieu de départ personnalisé'),
+                h('div', null, '🏢 Par défaut: siège de l\'entreprise')
+            ),
+            
+            h('div', { style: { ...cardStyle, marginBottom: 16 } },
+                h('div', { style: { fontWeight: 500, marginBottom: 12 } }, '➕ Nouveau lieu'),
+                h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 } },
+                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Nom *'), h('input', { type: 'text', className: 'form-control', placeholder: 'Ex: Domicile Jean', value: lieuForm.nom, onChange: e => setLieuForm({ ...lieuForm, nom: e.target.value }) })),
+                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Type'), h('select', { className: 'form-select', value: lieuForm.type, onChange: e => setLieuForm({ ...lieuForm, type: e.target.value }) }, Object.entries(lieuTypes).map(([k, v]) => h('option', { key: k, value: k }, v.icon, ' ', v.label)))),
+                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Adresse'), h('input', { type: 'text', className: 'form-control', placeholder: 'Optionnel', value: lieuForm.adresse, onChange: e => setLieuForm({ ...lieuForm, adresse: e.target.value }) })),
+                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Ville'), h('input', { type: 'text', className: 'form-control', placeholder: 'Optionnel', value: lieuForm.ville, onChange: e => setLieuForm({ ...lieuForm, ville: e.target.value }) })),
+                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Latitude *'), h('input', { type: 'text', className: 'form-control', placeholder: 'Ex: 45.7772', value: lieuForm.latitude, onChange: e => setLieuForm({ ...lieuForm, latitude: e.target.value }) })),
+                    h('div', null, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Longitude *'), h('input', { type: 'text', className: 'form-control', placeholder: 'Ex: 3.0870', value: lieuForm.longitude, onChange: e => setLieuForm({ ...lieuForm, longitude: e.target.value }) })),
+                    h('div', { style: { gridColumn: 'span 2' } }, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Technicien associé'), h('select', { className: 'form-select', value: lieuForm.technicien_id, onChange: e => setLieuForm({ ...lieuForm, technicien_id: e.target.value }) }, h('option', { value: '' }, '🏢 Lieu commun (tous)'), techniciens.map(t => h('option', { key: t.id, value: t.id }, '👤 ', t.name))))
+                ),
+                h('div', { style: { fontSize: 11, color: COLORS.muted, marginTop: 8 } }, '💡 Trouvez les coordonnées sur Google Maps (clic droit → "Qu\'est-ce qu\'il y a ici ?")'),
+                h('button', { className: 'btn btn-primary', style: { marginTop: 12 }, onClick: ajouterLieuDepart }, '➕ Ajouter')
+            ),
+            
+            h('div', { style: { fontWeight: 500, marginBottom: 8 } }, '📋 Lieux (', lieuxDepart.length, ')'),
+            lieuxDepart.length === 0
+                ? h('div', { style: { textAlign: 'center', color: COLORS.muted, padding: 20 } }, 'Aucun lieu configuré')
+                : h('div', { style: { maxHeight: 300, overflowY: 'auto' } },
+                    lieuxDepart.map(l => {
+                        const tech = l.technicien_id ? techniciens.find(t => t.id === l.technicien_id) : null;
+                        return h('div', { key: l.id, style: { display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: COLORS.background, borderRadius: 8, marginBottom: 8 } },
+                            h('span', { style: { fontSize: 20 } }, lieuTypes[l.type]?.icon || '📍'),
+                            h('div', { style: { flex: 1 } },
+                                h('div', { style: { fontWeight: 500 } }, l.nom, l.is_default && h('span', { style: { fontSize: 10, background: COLORS.success + '20', color: COLORS.success, padding: '2px 6px', borderRadius: 10, marginLeft: 8 } }, 'Défaut')),
+                                h('div', { style: { fontSize: 12, color: COLORS.muted } }, tech ? `👤 ${tech.name}` : '🏢 Commun', ' • ', l.ville || `${l.latitude}, ${l.longitude}`)
+                            ),
+                            !l.is_default && h('button', { className: 'btn btn-sm', style: { background: COLORS.danger + '20', color: COLORS.danger }, onClick: () => supprimerLieu(l.id) }, '🗑️')
+                        );
+                    })
+                )
+        )
+    );
+    
+    const renderModalEditCoords = () => showEditCoords && h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300 } },
+        h('div', { style: { background: COLORS.card, borderRadius: 16, padding: 24, width: 400, maxWidth: '95%' } },
+            h('h3', { style: { marginBottom: 16 } }, '📍 Modifier géolocalisation'),
+            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8, marginBottom: 16 } },
+                h('div', { style: { fontWeight: 500 } }, showEditCoords.ascenseur),
+                h('div', { style: { fontSize: 12, color: COLORS.muted } }, showEditCoords.adresse, ', ', showEditCoords.ville)
+            ),
+            h('div', { style: { marginBottom: 12 } }, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Latitude'), h('input', { type: 'text', className: 'form-control', value: coordsEdit.latitude, onChange: e => setCoordsEdit({ ...coordsEdit, latitude: e.target.value }) })),
+            h('div', { style: { marginBottom: 16 } }, h('label', { style: { fontSize: 12, color: COLORS.muted } }, 'Longitude'), h('input', { type: 'text', className: 'form-control', value: coordsEdit.longitude, onChange: e => setCoordsEdit({ ...coordsEdit, longitude: e.target.value }) })),
+            h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 16 } }, '💡 Google Maps: clic droit → "Qu\'est-ce qu\'il y a ici ?"'),
+            h('div', { style: { display: 'flex', gap: 8 } },
+                h('button', { className: 'btn btn-ghost', style: { flex: 1 }, onClick: () => { setShowEditCoords(null); setCoordsEdit({ latitude: '', longitude: '' }); } }, 'Annuler'),
+                h('button', { className: 'btn btn-primary', style: { flex: 1 }, onClick: () => sauvegarderCoords(showEditCoords) }, '💾 Enregistrer')
+            )
+        )
+    );
+    
+    // MAIN
+    if (loading) return h('div', { style: { textAlign: 'center', padding: 60 } }, h('div', { className: 'loading-spinner', style: { marginBottom: 16 } }), h('p', { style: { color: COLORS.muted } }, 'Chargement...'));
     
     return h('div', null,
-        // Header
         h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 } },
             h('div', null,
                 h('h2', { style: { fontSize: 18, fontWeight: 600, marginBottom: 4 } }, '🚗 Gestion des Tournées'),
-                h('p', { style: { fontSize: 12, color: COLORS.muted } }, 'Planning, templates et optimisation des visites')
-            ),
-            h('button', { 
-                className: 'btn btn-primary',
-                onClick: () => setEditingTournee({
-                    id: 'new-' + Date.now(),
-                    nom: '',
-                    date: new Date().toISOString().split('T')[0],
-                    jour: new Date().getDay() || 7,
-                    technicien: null,
-                    secteur: '',
-                    equipementIds: [],
-                    status: 'planifiee',
-                    heure_debut: '08:00'
-                })
-            }, '+ Nouvelle tournée')
+                h('p', { style: { fontSize: 12, color: COLORS.muted } }, tourneesDef.length, ' tournées • ', stats.retard + stats.aplanifier, ' à planifier • ', joursFeries.length, ' jours fériés')
+            )
         ),
         
-        // Navigation
-        h('div', { style: { display: 'flex', gap: 4, marginBottom: 20 } },
-            [
-                { id: 'planning', label: '📅 Planning', desc: 'Vue semaine' },
-                { id: 'templates', label: '📋 Templates', desc: 'Récurrences' },
-                { id: 'techniciens', label: '👷 Techniciens', desc: 'Disponibilités' }
-            ].map(tab => h('button', {
-                key: tab.id,
-                className: `btn ${activeView === tab.id ? 'btn-primary' : 'btn-ghost'}`,
-                onClick: () => setActiveView(tab.id)
-            }, tab.label))
+        h('div', { style: { display: 'flex', gap: 4, marginBottom: 20, flexWrap: 'wrap' } },
+            [{ id: 'aplanifier', label: '⚠️ À planifier', count: stats.retard + stats.aplanifier + stats.jamais }, { id: 'planning', label: '📅 Planning', count: tourneesPlanifiees.length }, { id: 'definitions', label: '📋 Toutes', count: tourneesDef.length }, { id: 'techniciens', label: '👷 Techniciens', count: techniciens.length }].map(tab =>
+                h('button', { key: tab.id, className: `btn ${activeView === tab.id ? 'btn-primary' : 'btn-ghost'}`, onClick: () => { setActiveView(tab.id); setSelectedDef(null); setSelectedTournee(null); } },
+                    tab.label,
+                    h('span', { style: { marginLeft: 6, background: activeView === tab.id ? 'rgba(255,255,255,0.2)' : tab.id === 'aplanifier' && tab.count > 0 ? COLORS.danger + '30' : COLORS.background, padding: '2px 8px', borderRadius: 10, fontSize: 11, color: tab.id === 'aplanifier' && tab.count > 0 && activeView !== tab.id ? COLORS.danger : 'inherit' } }, tab.count)
+                )
+            )
         ),
         
-        // Contenu
+        activeView === 'aplanifier' && renderAPlanifier(),
         activeView === 'planning' && renderPlanning(),
-        activeView === 'templates' && renderTemplates(),
+        activeView === 'definitions' && renderDefinitions(),
         activeView === 'techniciens' && renderTechniciens(),
         
-        // Modal édition
-        renderEditModal()
+        renderModalPlanifier(),
+        renderModalAutoPlan(),
+        renderModalAbsences(),
+        renderModalLieuxDepart(),
+        renderModalEditCoords()
     );
 };
 
-// ==========================================
-// PARC ASCENSEURS PAGE - Version 3.0 (ElevatorPark complet)
-// ==========================================
 const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
     // Navigation par onglets
     const [activeTab, setActiveTab] = useState('dashboard');
