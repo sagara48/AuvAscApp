@@ -19178,6 +19178,7 @@ const TourneesTab = ({ equipements, user, showToast }) => {
     const [absences, setAbsences] = useState([]);
     const [joursFeries, setJoursFeries] = useState([]);
     const [lieuxDepart, setLieuxDepart] = useState([]);
+    const [visitesEntretien, setVisitesEntretien] = useState({}); // Map code -> dernière visite
     const [selectedDef, setSelectedDef] = useState(null);
     const [selectedTournee, setSelectedTournee] = useState(null);
     const [showPlanifier, setShowPlanifier] = useState(false);
@@ -19371,9 +19372,14 @@ const TourneesTab = ({ equipements, user, showToast }) => {
             grouped[key].equipements.push(eq);
             const visites = getVisitesParAn(eq);
             grouped[key].nbVisitesParAn[visites] = (grouped[key].nbVisitesParAn[visites] || 0) + 1;
-            if (eq.dat_pass) {
-                const datPass = new Date(eq.dat_pass);
-                if (!grouped[key].derniereVisite || datPass > grouped[key].derniereVisite) grouped[key].derniereVisite = datPass;
+            
+            // Utiliser la dernière visite d'entretien depuis la table pannes
+            const derniereVisiteEq = visitesEntretien[eq.code];
+            if (derniereVisiteEq) {
+                const datVisite = new Date(derniereVisiteEq);
+                if (!grouped[key].derniereVisite || datVisite > grouped[key].derniereVisite) {
+                    grouped[key].derniereVisite = datVisite;
+                }
             }
         });
         
@@ -19402,7 +19408,7 @@ const TourneesTab = ({ equipements, user, showToast }) => {
             if (secteurCmp !== 0) return secteurCmp;
             return (a.ordre || 0) - (b.ordre || 0);
         });
-    }, [equipementsFiltres, getVisitesParAn, calculerTempsTrajet, isWellGeolocated, selectedLieuDepart]);
+    }, [equipementsFiltres, getVisitesParAn, calculerTempsTrajet, isWellGeolocated, selectedLieuDepart, visitesEntretien]);
     
     // Grouper par secteur pour la vue liste
     const tourneesParSecteur = useMemo(() => {
@@ -19579,11 +19585,13 @@ const TourneesTab = ({ equipements, user, showToast }) => {
     const loadData = async () => {
         setLoading(true);
         try {
-            const [techRes, absRes, jfRes, lieuxRes] = await Promise.all([
+            const [techRes, absRes, jfRes, lieuxRes, visitesRes] = await Promise.all([
                 db.from('profiles').select('*').in('role', ['technicien', 'admin']),
                 db.from('absences').select('*').gte('date_fin', new Date().toISOString().split('T')[0]).catch(() => ({ data: [] })),
                 db.from('jours_feries').select('*').catch(() => ({ data: [] })),
-                db.from('lieux_depart').select('*').catch(() => ({ data: [] }))
+                db.from('lieux_depart').select('*').catch(() => ({ data: [] })),
+                // Charger les visites d'entretien depuis la table pannes
+                db.from('pannes').select('code, jour').like('libelle', 'Visite d%entretien%').order('jour', { ascending: false }).catch(() => ({ data: [] }))
             ]);
             
             setTechniciens((techRes.data || []).map((t, idx) => ({
@@ -19592,6 +19600,19 @@ const TourneesTab = ({ equipements, user, showToast }) => {
             setAbsences(absRes.data || []);
             setJoursFeries(jfRes.data || []);
             setLieuxDepart(lieuxRes.data || []);
+            
+            // Créer un map code -> dernière visite d'entretien
+            const visites = {};
+            (visitesRes.data || []).forEach(v => {
+                if (v.code && v.jour) {
+                    // Garder uniquement la plus récente pour chaque code
+                    if (!visites[v.code] || new Date(v.jour) > new Date(visites[v.code])) {
+                        visites[v.code] = v.jour;
+                    }
+                }
+            });
+            setVisitesEntretien(visites);
+            console.log('Visites entretien chargées:', Object.keys(visites).length);
             
             await loadAllTournees();
             await loadTourneesPlanifiees(0);
@@ -19842,7 +19863,8 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         h('div', { style: { fontSize: 13, fontWeight: 500, marginBottom: 8 } }, '🏢 Équipements'),
         h('div', { style: { maxHeight: 280, overflowY: 'auto' } },
             selectedDef.equipements.map((eq, idx) => {
-                const joursDepuis = eq.dat_pass ? Math.floor((new Date() - new Date(eq.dat_pass)) / 86400000) : null;
+                const derniereVisiteEq = visitesEntretien[eq.code];
+                const joursDepuis = derniereVisiteEq ? Math.floor((new Date() - new Date(derniereVisiteEq)) / 86400000) : null;
                 return h('div', { key: eq.id || idx, style: { display: 'flex', alignItems: 'center', gap: 10, padding: 10, background: COLORS.background, borderRadius: 8, marginBottom: 6 } },
                     h('span', { style: { width: 24, height: 24, borderRadius: '50%', background: COLORS.primary, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, flexShrink: 0 } }, idx + 1),
                     h('div', { style: { flex: 1, minWidth: 0 } },
