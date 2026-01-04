@@ -19179,6 +19179,15 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
     // Panneau de détail
     const [detailPanel, setDetailPanel] = useState({ open: false, type: null, data: null });
     
+    // États pour le détail équipement
+    const [eqDetailTab, setEqDetailTab] = useState('pannes'); // 'pannes', 'controles', 'devis'
+    const [eqControlesYear, setEqControlesYear] = useState('');
+    
+    // États pour le détail client
+    const [clientDetailTab, setClientDetailTab] = useState('contrats'); // 'contrats', 'equipements'
+    const [clientShowAllContrats, setClientShowAllContrats] = useState(false);
+    const [clientShowAllEquipements, setClientShowAllEquipements] = useState(false);
+    
     // Données brutes
     const [equipements, setEquipements] = useState([]);
     const [arrets, setArrets] = useState([]);
@@ -19320,6 +19329,12 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
             setPannesProcessed(enrichedPannes);
             
             // Enrichir les devis avec les données équipement et date acceptation
+            // Créer les maps pour les jointures
+            const conMap = {};
+            conData.forEach(c => { conMap[c.id_wcontrat] = c; });
+            const cliMap = {};
+            cliData.forEach(c => { cliMap[c.id_wclient] = c; });
+            
             const enrichedDevis = devData.map(d => {
                 const equip = eqMap[d.id_wsoucont];
                 let dateAcceptation = null;
@@ -19329,13 +19344,23 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
                         if (jsonData.Date_Acceptation) dateAcceptation = String(jsonData.Date_Acceptation);
                     } catch (e) {}
                 }
+                // Récupérer le nom du client via équipement -> contrat -> client
+                let clientNom = null;
+                if (equip && equip.id_wcontrat) {
+                    const contrat = conMap[equip.id_wcontrat];
+                    if (contrat && contrat.id_wclient) {
+                        const client = cliMap[contrat.id_wclient];
+                        if (client) clientNom = client.nom;
+                    }
+                }
                 return {
                     ...d,
                     _ascenseur: equip ? equip.ascenseur : (d.id_wsoucont ? `#${d.id_wsoucont}` : '-'),
                     _ville: equip ? equip.ville : '',
                     _secteur: equip ? equip.secteur : '',
                     _equip: equip,
-                    _date_acceptation: dateAcceptation
+                    _date_acceptation: dateAcceptation,
+                    _clientNom: clientNom
                 };
             });
             setDevisProcessed(enrichedDevis);
@@ -19426,7 +19451,18 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
         return colors[s] || '#6B7280';
     };
     
-    const openDetail = (type, item) => setDetailPanel({ open: true, type, data: item });
+    const openDetail = (type, item) => {
+        setDetailPanel({ open: true, type, data: item });
+        // Réinitialiser les états des onglets
+        if (type === 'equipement') {
+            setEqDetailTab('pannes');
+            setEqControlesYear('');
+        } else if (type === 'client') {
+            setClientDetailTab('contrats');
+            setClientShowAllContrats(false);
+            setClientShowAllEquipements(false);
+        }
+    };
     const closeDetail = () => setDetailPanel({ open: false, type: null, data: null });
     
     const getEquipementClient = (eq) => {
@@ -19483,7 +19519,7 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
             else if (col === 'date_devis') { valA = a.date_devis || ''; valB = b.date_devis || ''; }
             else if (col === 'date_acceptation') { valA = a._date_acceptation || ''; valB = b._date_acceptation || ''; }
             else if (col === 'numero') { valA = a.numero || ''; valB = b.numero || ''; }
-            else if (col === 'client') { valA = a.client || ''; valB = b.client || ''; }
+            else if (col === 'client') { valA = a._clientNom || a.client || ''; valB = b._clientNom || b.client || ''; }
             else if (col === 'montant') { valA = parseFloat(a.montant_ht) || 0; valB = parseFloat(b.montant_ht) || 0; }
             else if (col === 'libelle') { valA = a.libelle || a.motif || ''; valB = b.libelle || b.motif || ''; }
             else if (col === 'depanneur') { valA = a.depanneur || ''; valB = b.depanneur || ''; }
@@ -19537,7 +19573,16 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
     },
         tabs.map(t => h('button', { 
             key: t.id, className: `btn ${activeTab === t.id ? 'btn-primary' : 'btn-ghost'}`,
-            onClick: () => { setActiveTab(t.id); setFilters({ secteur: '', ville: '', marque: '', statut: '', client: '', technicien: '', statutDevis: '', dateFrom: '', dateTo: '' }); setSearch(''); },
+            onClick: () => { 
+                setActiveTab(t.id); 
+                setFilters({ secteur: '', ville: '', marque: '', statut: '', client: '', technicien: '', statutDevis: '', dateFrom: '', dateTo: '' }); 
+                setSearch('');
+                // Réinitialiser le tri par défaut selon l'onglet (date décroissante pour pannes/arrêts/devis)
+                if (t.id === 'arrets') setSortConfig({ column: 'date_appel', direction: 'desc' });
+                else if (t.id === 'pannes') setSortConfig({ column: 'date_panne', direction: 'desc' });
+                else if (t.id === 'devis') setSortConfig({ column: 'date_devis', direction: 'desc' });
+                else setSortConfig({ column: 'ascenseur', direction: 'asc' });
+            },
             style: { whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }
         },
             h('span', null, t.icon),
@@ -19977,10 +20022,12 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
     const renderDevis = () => {
         const eqIds = new Set(filteredByUserSectors.map(e => e.id_wsoucont));
         let filtered = devisProcessed.filter(d => {
-            if (d.id_wsoucont && !eqIds.has(d.id_wsoucont)) return false;
+            // Exclure les devis sans appareil
+            if (!d.id_wsoucont) return false;
+            if (!eqIds.has(d.id_wsoucont)) return false;
             if (search) {
                 const term = search.toLowerCase();
-                if (![d.numero, d._ascenseur, d.client, d.objet].some(f => (f||'').toLowerCase().includes(term))) return false;
+                if (![d.numero, d._ascenseur, d._clientNom, d.objet].some(f => (f||'').toLowerCase().includes(term))) return false;
             }
             if (filters.secteur && d._secteur !== filters.secteur) return false;
             if (filters.ville && d._ville !== filters.ville) return false;
@@ -19990,16 +20037,14 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
         
         filtered = getSortedData(filtered, 'devis');
         const paginated = getPaginatedData(filtered, 'devis');
-        const totalHT = filtered.reduce((sum, d) => sum + (parseFloat(d.montant_ht) || 0), 0);
         
         const sortIcon = (col) => sortConfig.column === col ? (sortConfig.direction === 'asc' ? ' ↑' : ' ↓') : '';
         
         return h('div', null,
             renderFilters('devis', { secteurs: filterOptions.secteursDevis, villes: filterOptions.villesDevis, statutsDevis: true }),
             
-            h('div', { style: { marginBottom: 12, padding: 12, background: COLORS.successPastel, borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                h('span', { style: { fontSize: 13, color: COLORS.success } }, `${filtered.length} devis`),
-                h('span', { style: { fontWeight: 700, fontSize: 16, color: COLORS.success } }, `Total HT: ${formatMontant(totalHT)} €`)
+            h('div', { style: { marginBottom: 12, padding: 12, background: COLORS.infoPastel, borderRadius: 8 } },
+                h('span', { style: { fontSize: 13, color: COLORS.info } }, `${filtered.length} devis`)
             ),
             
             h('div', { className: 'card' },
@@ -20012,13 +20057,12 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
                                 h('th', { onClick: () => handleSort('numero'), style: { cursor: 'pointer' } }, 'Numéro' + sortIcon('numero')),
                                 h('th', { onClick: () => handleSort('ascenseur'), style: { cursor: 'pointer' } }, 'Appareil' + sortIcon('ascenseur')),
                                 h('th', { onClick: () => handleSort('client'), style: { cursor: 'pointer' } }, 'Client' + sortIcon('client')),
-                                h('th', { onClick: () => handleSort('montant'), style: { cursor: 'pointer', textAlign: 'right' } }, 'Montant HT' + sortIcon('montant')),
                                 h('th', { onClick: () => handleSort('statut'), style: { cursor: 'pointer' } }, 'Statut' + sortIcon('statut'))
                             )
                         ),
                         h('tbody', null,
                             paginated.length === 0 
-                                ? h('tr', null, h('td', { colSpan: 7, style: { textAlign: 'center', padding: 40, color: COLORS.muted } }, 'Aucun devis'))
+                                ? h('tr', null, h('td', { colSpan: 6, style: { textAlign: 'center', padding: 40, color: COLORS.muted } }, 'Aucun devis'))
                                 : paginated.map(d => {
                                     const statut = getDevisStatut(d.statut);
                                     return h('tr', { 
@@ -20034,8 +20078,7 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
                                                 style: { color: COLORS.primary, fontWeight: 500, cursor: 'pointer' } 
                                             }, d._ascenseur)
                                         ),
-                                        h('td', null, truncate(d.client, 20) || '-'),
-                                        h('td', { style: { textAlign: 'right', fontWeight: 600, color: COLORS.success } }, d.montant_ht ? `${formatMontant(d.montant_ht)} €` : '-'),
+                                        h('td', null, truncate(d._clientNom, 25) || '-'),
                                         h('td', null, h('span', { className: 'badge', style: { background: statut.bg, color: statut.color } }, statut.label))
                                     );
                                 })
@@ -20237,8 +20280,82 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
         const isArret = arretIds.has(eq.id_wsoucont);
         const contrat = getEquipementContrat(eq);
         const client = getEquipementClient(eq);
-        const eqPannes = pannesProcessed.filter(p => p.id_wsoucont === eq.id_wsoucont).slice(0, 10);
-        const eqDevis = devisProcessed.filter(d => d.id_wsoucont === eq.id_wsoucont).slice(0, 5);
+        
+        // Récupérer et trier les pannes (plus récentes en premier)
+        const allEqPannes = pannesProcessed
+            .filter(p => p.id_wsoucont === eq.id_wsoucont)
+            .sort((a, b) => {
+                const dateA = String(a.date_panne || '');
+                const dateB = String(b.date_panne || '');
+                return dateB.localeCompare(dateA);
+            });
+        
+        // Classifier les pannes en contrôles vs pannes/entretiens
+        const isControle = (p) => {
+            const combined = ((p.libelle || '') + ' ' + (p.motif || '')).toLowerCase();
+            return combined.includes('parachute') || combined.includes('câble') || combined.includes('cable') || 
+                   combined.includes('contrôle') || combined.includes('controle') || combined.includes('vérification') || 
+                   combined.includes('quinquennal') || combined.includes('réglementaire') || combined.includes('semestriel') || 
+                   combined.includes('annuel') || combined.includes('porte pali') || combined.includes('limiteur') || 
+                   combined.includes('etanchéité') || combined.includes('5 ans') || combined.includes('technique');
+        };
+        
+        const eqPannesEntretiens = allEqPannes.filter(p => !isControle(p));
+        const eqControles = allEqPannes.filter(p => isControle(p));
+        
+        // Années disponibles pour les contrôles
+        const controlesYears = [...new Set(eqControles.map(c => {
+            const d = String(c.date_panne || '');
+            if (/^\d{8}$/.test(d)) return d.slice(0, 4);
+            if (/^\d{4}-/.test(d)) return d.slice(0, 4);
+            return null;
+        }).filter(Boolean))].sort((a, b) => b.localeCompare(a));
+        
+        // Filtrer les contrôles par année
+        const filteredControles = eqControlesYear 
+            ? eqControles.filter(c => {
+                const d = String(c.date_panne || '');
+                if (/^\d{8}$/.test(d)) return d.slice(0, 4) === eqControlesYear;
+                if (/^\d{4}-/.test(d)) return d.slice(0, 4) === eqControlesYear;
+                return false;
+            })
+            : eqControles;
+        
+        // Récupérer et trier les devis (plus récents en premier)
+        const eqDevis = devisProcessed
+            .filter(d => d.id_wsoucont === eq.id_wsoucont)
+            .sort((a, b) => {
+                const dateA = String(a.date_devis || '');
+                const dateB = String(b.date_devis || '');
+                return dateB.localeCompare(dateA);
+            });
+        
+        const tabStyle = (active) => ({
+            padding: '8px 16px', border: 'none', background: active ? COLORS.primary : 'transparent',
+            color: active ? 'white' : COLORS.text, borderRadius: 6, cursor: 'pointer', fontWeight: 500, fontSize: 13
+        });
+        
+        const renderItem = (item, type, borderColor) => h('div', { 
+            key: item.id_panne || item.id_devis, 
+            onClick: () => openDetail(type, item),
+            style: { padding: 12, background: COLORS.background, borderRadius: 8, marginBottom: 8, borderLeft: `4px solid ${borderColor}`, cursor: 'pointer', transition: 'transform 0.1s' },
+            onMouseOver: e => e.currentTarget.style.transform = 'translateX(4px)',
+            onMouseOut: e => e.currentTarget.style.transform = 'translateX(0)'
+        },
+            type === 'panne' ? h(Fragment, null,
+                h('div', { style: { fontWeight: 500, marginBottom: 4 } }, truncate(item.libelle || item.motif, 45)),
+                h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 12, color: COLORS.muted } },
+                    h('span', null, formatDateFR(item.date_panne)),
+                    h('span', null, item.depanneur || '-')
+                )
+            ) : h(Fragment, null,
+                h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 } },
+                    h('span', { style: { fontWeight: 500 } }, item.numero || `#${item.id_devis}`),
+                    h('span', { className: 'badge', style: { background: getDevisStatut(item.statut).bg, color: getDevisStatut(item.statut).color, fontSize: 10 } }, getDevisStatut(item.statut).label)
+                ),
+                h('div', { style: { fontSize: 12, color: COLORS.muted } }, `${formatDateFR(item.date_devis)}${item._clientNom ? ' - ' + item._clientNom : ''}`)
+            )
+        );
         
         return h('div', null,
             h('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } },
@@ -20282,34 +20399,51 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
                 h('span', { style: { color: COLORS.info } }, '→')
             ),
             
-            h('div', { style: { marginBottom: 20 } },
-                h('h4', { style: { margin: '0 0 12px 0', fontSize: 14, fontWeight: 600 } }, `🔧 Pannes (${eqPannes.length})`),
-                eqPannes.length === 0 
-                    ? h('div', { style: { color: COLORS.muted, fontSize: 13 } }, 'Aucune panne enregistrée')
-                    : h('div', { style: { maxHeight: 200, overflowY: 'auto' } },
-                        eqPannes.map(p => h('div', { key: p.id_panne, style: { padding: 10, background: COLORS.background, borderRadius: 6, marginBottom: 8, borderLeft: `3px solid ${COLORS.warning}` } },
-                            h('div', { style: { fontWeight: 500 } }, truncate(p.libelle || p.motif, 40)),
-                            h('div', { style: { fontSize: 12, color: COLORS.muted } }, `${formatDateFR(p.date_panne)} - ${p.depanneur || 'N/A'}`)
-                        ))
-                    )
+            // Onglets
+            h('div', { style: { display: 'flex', gap: 8, marginBottom: 16, background: COLORS.background, padding: 6, borderRadius: 10 } },
+                h('button', { style: tabStyle(eqDetailTab === 'pannes'), onClick: () => setEqDetailTab('pannes') }, 
+                    `🔧 Pannes (${eqPannesEntretiens.length})`
+                ),
+                h('button', { style: tabStyle(eqDetailTab === 'controles'), onClick: () => setEqDetailTab('controles') }, 
+                    `📋 Contrôles (${eqControles.length})`
+                ),
+                h('button', { style: tabStyle(eqDetailTab === 'devis'), onClick: () => setEqDetailTab('devis') }, 
+                    `📄 Devis (${eqDevis.length})`
+                )
             ),
             
-            h('div', null,
-                h('h4', { style: { margin: '0 0 12px 0', fontSize: 14, fontWeight: 600 } }, `📄 Devis (${eqDevis.length})`),
-                eqDevis.length === 0 
-                    ? h('div', { style: { color: COLORS.muted, fontSize: 13 } }, 'Aucun devis')
-                    : h('div', { style: { maxHeight: 200, overflowY: 'auto' } },
-                        eqDevis.map(d => {
-                            const statut = getDevisStatut(d.statut);
-                            return h('div', { key: d.id_devis, style: { padding: 10, background: COLORS.background, borderRadius: 6, marginBottom: 8, borderLeft: `3px solid ${statut.color}` } },
-                                h('div', { style: { display: 'flex', justifyContent: 'space-between' } },
-                                    h('span', { style: { fontWeight: 500 } }, d.numero || `#${d.id_devis}`),
-                                    h('span', { style: { fontWeight: 600, color: COLORS.success } }, d.montant_ht ? `${formatMontant(d.montant_ht)} €` : '-')
-                                ),
-                                h('div', { style: { fontSize: 12, color: COLORS.muted } }, `${formatDateFR(d.date_devis)} - ${statut.label}`)
-                            );
-                        })
+            // Contenu selon l'onglet
+            eqDetailTab === 'pannes' && h('div', { style: { maxHeight: 350, overflowY: 'auto' } },
+                eqPannesEntretiens.length === 0 
+                    ? h('div', { style: { color: COLORS.muted, fontSize: 13, textAlign: 'center', padding: 30 } }, 'Aucune panne/entretien enregistré')
+                    : eqPannesEntretiens.map(p => renderItem(p, 'panne', COLORS.warning))
+            ),
+            
+            eqDetailTab === 'controles' && h('div', null,
+                // Filtre par année
+                controlesYears.length > 0 && h('div', { style: { marginBottom: 12 } },
+                    h('select', {
+                        className: 'form-select', value: eqControlesYear,
+                        onChange: e => setEqControlesYear(e.target.value),
+                        style: { width: '100%' }
+                    },
+                        h('option', { value: '' }, `Toutes les années (${eqControles.length})`),
+                        controlesYears.map(y => h('option', { key: y, value: y }, 
+                            `${y} (${eqControles.filter(c => String(c.date_panne || '').startsWith(y)).length})`
+                        ))
                     )
+                ),
+                h('div', { style: { maxHeight: 300, overflowY: 'auto' } },
+                    filteredControles.length === 0 
+                        ? h('div', { style: { color: COLORS.muted, fontSize: 13, textAlign: 'center', padding: 30 } }, 'Aucun contrôle enregistré')
+                        : filteredControles.map(p => renderItem(p, 'panne', COLORS.purple))
+                )
+            ),
+            
+            eqDetailTab === 'devis' && h('div', { style: { maxHeight: 350, overflowY: 'auto' } },
+                eqDevis.length === 0 
+                    ? h('div', { style: { color: COLORS.muted, fontSize: 13, textAlign: 'center', padding: 30 } }, 'Aucun devis')
+                    : eqDevis.map(d => renderItem(d, 'devis', getDevisStatut(d.statut).color))
             )
         );
     };
@@ -20356,11 +20490,6 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
     const renderDevisDetail = (d) => {
         const statut = getDevisStatut(d.statut);
         return h('div', null,
-            h('div', { style: { textAlign: 'center', padding: 20, background: COLORS.successPastel, borderRadius: 12, marginBottom: 20 } },
-                h('div', { style: { fontSize: 11, color: COLORS.success } }, 'MONTANT HT'),
-                h('div', { style: { fontSize: 32, fontWeight: 700, color: COLORS.success } }, d.montant_ht ? `${formatMontant(d.montant_ht)} €` : '-')
-            ),
-            
             h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 } },
                 h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
                     h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'NUMÉRO'),
@@ -20380,7 +20509,7 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
                 ),
                 h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8, gridColumn: 'span 2' } },
                     h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'CLIENT'),
-                    h('div', { style: { fontWeight: 500 } }, d.client || '-')
+                    h('div', { style: { fontWeight: 500 } }, d._clientNom || '-')
                 ),
                 h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8, gridColumn: 'span 2' } },
                     h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'OBJET'),
@@ -20408,6 +20537,15 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
             return client && client.id_wclient === c.id_wclient;
         });
         
+        const LIMIT = 5;
+        const displayedContrats = clientShowAllContrats ? clientContrats : clientContrats.slice(0, LIMIT);
+        const displayedEquipements = clientShowAllEquipements ? clientEquipements : clientEquipements.slice(0, LIMIT);
+        
+        const tabStyle = (active) => ({
+            padding: '8px 16px', border: 'none', background: active ? COLORS.primary : 'transparent',
+            color: active ? 'white' : COLORS.text, borderRadius: 6, cursor: 'pointer', fontWeight: 500, fontSize: 13
+        });
+        
         return h('div', null,
             h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 } },
                 h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
@@ -20425,31 +20563,84 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
                 )
             ),
             
+            // Compteurs
             h('div', { style: { display: 'flex', gap: 12, marginBottom: 20 } },
-                h('div', { style: { flex: 1, padding: 16, background: COLORS.infoPastel, borderRadius: 8, textAlign: 'center' } },
-                    h('div', { style: { fontSize: 24, fontWeight: 700, color: COLORS.info } }, clientContrats.length),
-                    h('div', { style: { fontSize: 12, color: COLORS.info } }, 'Contrats')
+                h('div', { 
+                    onClick: () => setClientDetailTab('contrats'),
+                    style: { flex: 1, padding: 16, background: clientDetailTab === 'contrats' ? COLORS.info : COLORS.infoPastel, borderRadius: 8, textAlign: 'center', cursor: 'pointer', transition: 'all 0.2s' } 
+                },
+                    h('div', { style: { fontSize: 24, fontWeight: 700, color: clientDetailTab === 'contrats' ? 'white' : COLORS.info } }, clientContrats.length),
+                    h('div', { style: { fontSize: 12, color: clientDetailTab === 'contrats' ? 'white' : COLORS.info } }, 'Contrats')
                 ),
-                h('div', { style: { flex: 1, padding: 16, background: COLORS.successPastel, borderRadius: 8, textAlign: 'center' } },
-                    h('div', { style: { fontSize: 24, fontWeight: 700, color: COLORS.success } }, clientEquipements.length),
-                    h('div', { style: { fontSize: 12, color: COLORS.success } }, 'Équipements')
+                h('div', { 
+                    onClick: () => setClientDetailTab('equipements'),
+                    style: { flex: 1, padding: 16, background: clientDetailTab === 'equipements' ? COLORS.success : COLORS.successPastel, borderRadius: 8, textAlign: 'center', cursor: 'pointer', transition: 'all 0.2s' } 
+                },
+                    h('div', { style: { fontSize: 24, fontWeight: 700, color: clientDetailTab === 'equipements' ? 'white' : COLORS.success } }, clientEquipements.length),
+                    h('div', { style: { fontSize: 12, color: clientDetailTab === 'equipements' ? 'white' : COLORS.success } }, 'Équipements')
                 )
             ),
             
-            clientContrats.length > 0 && h('div', null,
-                h('h4', { style: { margin: '0 0 12px 0', fontSize: 14, fontWeight: 600 } }, '📋 Contrats'),
-                h('div', { style: { maxHeight: 200, overflowY: 'auto' } },
-                    clientContrats.map(ct => h('div', { 
-                        key: ct.id_wcontrat, onClick: () => openDetail('contrat', ct),
-                        style: { padding: 10, background: COLORS.background, borderRadius: 6, marginBottom: 8, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }
-                    },
-                        h('div', null,
-                            h('div', { style: { fontWeight: 500 } }, ct.immeuble || `#${ct.id_wcontrat}`),
-                            h('div', { style: { fontSize: 12, color: COLORS.muted } }, ct.ville || '-')
+            // Contenu selon l'onglet
+            clientDetailTab === 'contrats' && h('div', null,
+                clientContrats.length === 0 
+                    ? h('div', { style: { color: COLORS.muted, fontSize: 13, textAlign: 'center', padding: 30 } }, 'Aucun contrat')
+                    : h(Fragment, null,
+                        h('div', { style: { maxHeight: clientShowAllContrats ? 350 : 'none', overflowY: clientShowAllContrats ? 'auto' : 'visible' } },
+                            displayedContrats.map(ct => h('div', { 
+                                key: ct.id_wcontrat, onClick: () => openDetail('contrat', ct),
+                                style: { padding: 12, background: COLORS.background, borderRadius: 8, marginBottom: 8, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', transition: 'transform 0.1s' },
+                                onMouseOver: e => e.currentTarget.style.transform = 'translateX(4px)',
+                                onMouseOut: e => e.currentTarget.style.transform = 'translateX(0)'
+                            },
+                                h('div', null,
+                                    h('div', { style: { fontWeight: 500 } }, ct.immeuble || `#${ct.id_wcontrat}`),
+                                    h('div', { style: { fontSize: 12, color: COLORS.muted, display: 'flex', gap: 8 } },
+                                        h('span', null, ct.ville || '-'),
+                                        ct.secteur && h('span', { className: 'badge', style: { background: getSecteurColor(ct.secteur), color: 'white', fontSize: 9, padding: '2px 6px' } }, ct.secteur)
+                                    )
+                                ),
+                                h('span', { style: { color: COLORS.muted } }, '→')
+                            ))
                         ),
-                        h('span', { style: { color: COLORS.muted } }, '→')
-                    ))
-                )
+                        clientContrats.length > LIMIT && h('button', {
+                            className: 'btn btn-secondary btn-sm',
+                            onClick: () => setClientShowAllContrats(!clientShowAllContrats),
+                            style: { width: '100%', marginTop: 8 }
+                        }, clientShowAllContrats ? '▲ Voir moins' : `▼ Voir plus (${clientContrats.length - LIMIT} autres)`)
+                    )
+            ),
+            
+            clientDetailTab === 'equipements' && h('div', null,
+                clientEquipements.length === 0 
+                    ? h('div', { style: { color: COLORS.muted, fontSize: 13, textAlign: 'center', padding: 30 } }, 'Aucun équipement')
+                    : h(Fragment, null,
+                        h('div', { style: { maxHeight: clientShowAllEquipements ? 350 : 'none', overflowY: clientShowAllEquipements ? 'auto' : 'visible' } },
+                            displayedEquipements.map(eq => {
+                                const isArret = arretIds.has(eq.id_wsoucont);
+                                return h('div', { 
+                                    key: eq.id_wsoucont, onClick: () => openDetail('equipement', eq),
+                                    style: { padding: 12, background: isArret ? COLORS.dangerPastel : COLORS.background, borderRadius: 8, marginBottom: 8, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', transition: 'transform 0.1s' },
+                                    onMouseOver: e => e.currentTarget.style.transform = 'translateX(4px)',
+                                    onMouseOut: e => e.currentTarget.style.transform = 'translateX(0)'
+                                },
+                                    h('div', null,
+                                        h('div', { style: { fontWeight: 500 } }, eq.ascenseur || `#${eq.id_wsoucont}`),
+                                        h('div', { style: { fontSize: 12, color: COLORS.muted } }, eq.adresse || '-')
+                                    ),
+                                    h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                                        isArret ? h('span', { className: 'badge badge-danger', style: { fontSize: 10 } }, '🚨') : h('span', { className: 'badge badge-success', style: { fontSize: 10 } }, '✓'),
+                                        h('span', { style: { color: COLORS.muted } }, '→')
+                                    )
+                                );
+                            })
+                        ),
+                        clientEquipements.length > LIMIT && h('button', {
+                            className: 'btn btn-secondary btn-sm',
+                            onClick: () => setClientShowAllEquipements(!clientShowAllEquipements),
+                            style: { width: '100%', marginTop: 8 }
+                        }, clientShowAllEquipements ? '▲ Voir moins' : `▼ Voir plus (${clientEquipements.length - LIMIT} autres)`)
+                    )
             )
         );
     };
