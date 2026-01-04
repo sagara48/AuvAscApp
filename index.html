@@ -19612,7 +19612,6 @@ const TourneesTab = ({ equipements, user, showToast }) => {
                 const { error } = await db.from('tournees').insert({
                     nom: sugg.tournee.nom,
                     secteur: sugg.tournee.secteur,
-                    ordre: sugg.tournee.ordre,
                     date: sugg.date,
                     heure_debut: '08:00',
                     status: 'planifiee',
@@ -19728,7 +19727,6 @@ const TourneesTab = ({ equipements, user, showToast }) => {
             const insertData = {
                 nom: selectedDef.nom,
                 secteur: selectedDef.secteur,
-                ordre: selectedDef.ordre,
                 date: planifierData.date,
                 heure_debut: planifierData.heure_debut || '08:00',
                 status: 'planifiee',
