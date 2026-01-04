@@ -19199,6 +19199,7 @@ const TourneesTab = ({ equipements, user, showToast }) => {
     const [coordsEdit, setCoordsEdit] = useState({ latitude: '', longitude: '' });
     const [selectedLieuDepart, setSelectedLieuDepart] = useState(null);
     const [expandedSecteurs, setExpandedSecteurs] = useState({});
+    const [expandedTournees, setExpandedTournees] = useState({});
     const mapContainerRef = useRef(null);
     const mapInstanceRef = useRef(null);
     
@@ -19582,16 +19583,26 @@ const TourneesTab = ({ equipements, user, showToast }) => {
     
     useEffect(() => { loadData(); }, []);
     
+    const safeQuery = async (query) => {
+        try {
+            const result = await query;
+            return result;
+        } catch (err) {
+            console.log('Query error:', err);
+            return { data: [] };
+        }
+    };
+    
     const loadData = async () => {
         setLoading(true);
         try {
             const [techRes, absRes, jfRes, lieuxRes, visitesRes] = await Promise.all([
-                db.from('profiles').select('*').in('role', ['technicien', 'admin']),
-                db.from('absences').select('*').gte('date_fin', new Date().toISOString().split('T')[0]).catch(() => ({ data: [] })),
-                db.from('jours_feries').select('*').catch(() => ({ data: [] })),
-                db.from('lieux_depart').select('*').catch(() => ({ data: [] })),
+                safeQuery(db.from('profiles').select('*').in('role', ['technicien', 'admin'])),
+                safeQuery(db.from('absences').select('*').gte('date_fin', new Date().toISOString().split('T')[0])),
+                safeQuery(db.from('jours_feries').select('*')),
+                safeQuery(db.from('lieux_depart').select('*')),
                 // Charger les visites d'entretien depuis la table pannes
-                db.from('pannes').select('id_wsoucont, jour').like('libelle', 'Visite d%entretien%').order('jour', { ascending: false }).catch(() => ({ data: [] }))
+                safeQuery(db.from('pannes').select('id_wsoucont, jour').like('libelle', 'Visite d%entretien%').order('jour', { ascending: false }))
             ]);
             
             setTechniciens((techRes.data || []).map((t, idx) => ({
@@ -19935,6 +19946,7 @@ const TourneesTab = ({ equipements, user, showToast }) => {
                     isExpanded && h('div', null,
                         tourneesGroupe.sort((a, b) => (a.ordre || 0) - (b.ordre || 0)).map(def => {
                             const badge = getStatutBadge(def.statut, def.joursRestants);
+                            const isTourneeExpanded = expandedTournees[def.id];
                             return h('div', { key: def.id },
                                 // Ligne de la tournée
                                 h('div', { 
@@ -19945,11 +19957,11 @@ const TourneesTab = ({ equipements, user, showToast }) => {
                                         padding: '10px 16px', 
                                         borderBottom: `1px solid ${COLORS.border}`,
                                         cursor: 'pointer',
-                                        background: selectedDef?.id === def.id ? COLORS.primaryPastel : 'transparent'
+                                        background: isTourneeExpanded ? COLORS.primaryPastel : 'transparent'
                                     },
-                                    onClick: () => setSelectedDef(selectedDef?.id === def.id ? null : def)
+                                    onClick: () => setExpandedTournees(prev => ({ ...prev, [def.id]: !prev[def.id] }))
                                 },
-                                    h('span', { style: { fontSize: 12 } }, selectedDef?.id === def.id ? '▼' : '▶'),
+                                    h('span', { style: { fontSize: 12 } }, isTourneeExpanded ? '▼' : '▶'),
                                     h('span', { style: { width: 32, height: 32, borderRadius: 8, background: secteurColor + '20', color: secteurColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 14 } }, def.ordre),
                                     h('div', { style: { flex: 1 } },
                                         h('div', { style: { fontWeight: 500, fontSize: 13 } }, 'Tournée ', def.ordre),
@@ -19963,8 +19975,8 @@ const TourneesTab = ({ equipements, user, showToast }) => {
                                     h('span', { style: badge.style }, badge.icon),
                                     h('button', { className: 'btn btn-sm btn-ghost', onClick: e => { e.stopPropagation(); setSelectedDef(def); setShowPlanifier(true); } }, '📅')
                                 ),
-                                // Liste des équipements (si tournée sélectionnée)
-                                selectedDef?.id === def.id && h('div', { style: { background: COLORS.background, borderBottom: `1px solid ${COLORS.border}` } },
+                                // Liste des équipements (si tournée dépliée)
+                                isTourneeExpanded && h('div', { style: { background: COLORS.background, borderBottom: `1px solid ${COLORS.border}` } },
                                     def.equipements.map((eq, idx) => {
                                         const derniereVisiteEq = visitesEntretien[eq.id_wsoucont];
                                         const joursDepuis = derniereVisiteEq ? Math.floor((new Date() - new Date(derniereVisiteEq)) / 86400000) : null;
@@ -19999,9 +20011,7 @@ const TourneesTab = ({ equipements, user, showToast }) => {
                     )
                 );
             })
-        ),
-        
-        selectedDef && !showPlanifier && renderDetailPanel()
+        )
     );
     
     const renderPlanning = () => h('div', null,
