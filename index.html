@@ -19209,6 +19209,7 @@ const TourneesTab = ({ equipements, user, showToast }) => {
     const [selectedLieuDepart, setSelectedLieuDepart] = useState(null);
     const [expandedSecteurs, setExpandedSecteurs] = useState({});
     const [expandedTournees, setExpandedTournees] = useState({});
+    const [selectedEquipement, setSelectedEquipement] = useState(null);
     const mapContainerRef = useRef(null);
     const mapInstanceRef = useRef(null);
     
@@ -19704,19 +19705,23 @@ const TourneesTab = ({ equipements, user, showToast }) => {
             const today = new Date();
             const in3m = new Date(today);
             in3m.setMonth(in3m.getMonth() + 3);
-            const { data } = await db.from('tournees').select('*').gte('date', today.toISOString().split('T')[0]).lte('date', in3m.toISOString().split('T')[0]);
+            const { data, error } = await db.from('tournees').select('*').gte('date', today.toISOString().split('T')[0]).lte('date', in3m.toISOString().split('T')[0]);
+            console.log('loadAllTournees:', { from: today.toISOString().split('T')[0], to: in3m.toISOString().split('T')[0], count: data?.length, error });
             setAllTourneesPlanifiees(data || []);
-        } catch (err) { setAllTourneesPlanifiees([]); }
+        } catch (err) { console.error('loadAllTournees error:', err); setAllTourneesPlanifiees([]); }
     };
     
     const loadTourneesPlanifiees = async (weekOffset) => {
         const monday = getMonday(weekOffset);
         const sunday = new Date(monday);
         sunday.setDate(monday.getDate() + 6);
+        const fromDate = monday.toISOString().split('T')[0];
+        const toDate = sunday.toISOString().split('T')[0];
         try {
-            const { data } = await db.from('tournees').select('*').gte('date', monday.toISOString().split('T')[0]).lte('date', sunday.toISOString().split('T')[0]).order('date');
+            const { data, error } = await db.from('tournees').select('*').gte('date', fromDate).lte('date', toDate).order('date');
+            console.log('loadTourneesPlanifiees:', { weekOffset, from: fromDate, to: toDate, count: data?.length, data, error });
             setTourneesPlanifiees((data || []).map(t => ({ ...t, technicien: techniciens.find(tech => tech.id === t.technicien_id), jour: new Date(t.date).getDay() })));
-        } catch (err) { setTourneesPlanifiees([]); }
+        } catch (err) { console.error('loadTourneesPlanifiees error:', err); setTourneesPlanifiees([]); }
     };
     
     useEffect(() => { if (techniciens.length > 0) loadTourneesPlanifiees(selectedWeek); }, [selectedWeek, techniciens]);
@@ -19948,19 +19953,49 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         
         h('div', { style: { fontSize: 13, fontWeight: 500, marginBottom: 8 } }, '🏢 Équipements'),
         h('div', { style: { maxHeight: 280, overflowY: 'auto' } },
-            selectedDef.equipements.map((eq, idx) => {
-                const derniereVisiteEq = visitesEntretien[eq.id_wsoucont];
-                const dateParsed = parseDate(derniereVisiteEq);
-                const joursDepuis = dateParsed ? Math.floor((new Date() - dateParsed) / 86400000) : null;
-                return h('div', { key: eq.id || idx, style: { display: 'flex', alignItems: 'center', gap: 10, padding: 10, background: COLORS.background, borderRadius: 8, marginBottom: 6 } },
-                    h('span', { style: { width: 24, height: 24, borderRadius: '50%', background: COLORS.primary, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, flexShrink: 0 } }, idx + 1),
-                    h('div', { style: { flex: 1, minWidth: 0 } },
-                        h('div', { style: { fontWeight: 500, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, eq.ascenseur || eq.code),
-                        h('div', { style: { fontSize: 11, color: COLORS.muted } }, eq.ville, ' • ', formatCycle(getVisitesParAn(eq)))
+            (() => {
+                // Grouper les équipements par fréquence
+                const parFrequence = {};
+                selectedDef.equipements.forEach((eq, idx) => {
+                    const freq = getVisitesParAn(eq);
+                    if (!parFrequence[freq]) parFrequence[freq] = [];
+                    parFrequence[freq].push({ ...eq, _idx: idx });
+                });
+                
+                const frequences = Object.keys(parFrequence).map(Number).sort((a, b) => b - a);
+                
+                return frequences.map(freq => h('div', { key: freq, style: { marginBottom: 8 } },
+                    h('div', { style: { padding: '4px 8px', background: getFrequenceColor(freq) + '15', borderRadius: 6, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 } },
+                        h('span', { style: { padding: '2px 6px', background: getFrequenceColor(freq) + '30', color: getFrequenceColor(freq), borderRadius: 8, fontSize: 10, fontWeight: 600 } }, formatCycle(freq)),
+                        h('span', { style: { fontSize: 10, color: COLORS.muted } }, parFrequence[freq].length, ' app.')
                     ),
-                    joursDepuis !== null && h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 10, background: COLORS.muted + '20', color: COLORS.muted } }, joursDepuis, 'j')
-                );
-            })
+                    parFrequence[freq].map((eq, i) => {
+                        const derniereVisiteEq = visitesEntretien[eq.id_wsoucont];
+                        const dateParsed = parseDate(derniereVisiteEq);
+                        const joursDepuis = dateParsed ? Math.floor((new Date() - dateParsed) / 86400000) : null;
+                        const cycleEq = getCycleJours(freq);
+                        const enRetard = joursDepuis !== null && joursDepuis > cycleEq;
+                        
+                        return h('div', { 
+                            key: eq.id || eq.id_wsoucont || i, 
+                            style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', background: COLORS.background, borderRadius: 6, marginBottom: 4, cursor: 'pointer' },
+                            onClick: () => setSelectedEquipement(eq)
+                        },
+                            h('span', { style: { width: 20, height: 20, borderRadius: '50%', background: COLORS.primary, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 600, flexShrink: 0 } }, eq._idx + 1),
+                            h('div', { style: { flex: 1, minWidth: 0 } },
+                                h('div', { style: { fontWeight: 500, fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, eq.ascenseur || eq.code),
+                                h('div', { style: { fontSize: 10, color: COLORS.muted } }, eq.ville)
+                            ),
+                            h('div', { style: { textAlign: 'right' } },
+                                dateParsed 
+                                    ? h('div', { style: { fontSize: 9, color: enRetard ? COLORS.danger : COLORS.success } }, formatDate(dateParsed))
+                                    : h('div', { style: { fontSize: 9, color: COLORS.muted } }, '-'),
+                                joursDepuis !== null && h('div', { style: { fontSize: 8, color: enRetard ? COLORS.danger : COLORS.muted } }, joursDepuis, 'j')
+                            )
+                        );
+                    })
+                ));
+            })()
         )
     );
     
@@ -20051,37 +20086,73 @@ const TourneesTab = ({ equipements, user, showToast }) => {
                                     h('span', { style: badge.style }, badge.icon),
                                     h('button', { className: 'btn btn-sm btn-ghost', onClick: e => { e.stopPropagation(); setSelectedDef(def); setShowPlanifier(true); } }, '📅')
                                 ),
-                                // Liste des équipements (si tournée dépliée)
+                                // Liste des équipements (si tournée dépliée) - groupés par fréquence
                                 isTourneeExpanded && h('div', { style: { background: COLORS.background, borderBottom: `1px solid ${COLORS.border}` } },
-                                    def.equipements.map((eq, idx) => {
-                                        const derniereVisiteEq = visitesEntretien[eq.id_wsoucont];
-                                        const dateParsed = parseDate(derniereVisiteEq);
-                                        const joursDepuis = dateParsed ? Math.floor((new Date() - dateParsed) / 86400000) : null;
-                                        const cycleEq = getCycleJours(getVisitesParAn(eq));
-                                        const enRetard = joursDepuis !== null && joursDepuis > cycleEq;
+                                    (() => {
+                                        // Grouper les équipements par fréquence
+                                        const parFrequence = {};
+                                        def.equipements.forEach((eq, idx) => {
+                                            const freq = getVisitesParAn(eq);
+                                            if (!parFrequence[freq]) parFrequence[freq] = [];
+                                            parFrequence[freq].push({ ...eq, _idx: idx });
+                                        });
                                         
-                                        return h('div', { 
-                                            key: eq.id || eq.id_wsoucont || idx, 
-                                            style: { 
-                                                display: 'flex', 
-                                                alignItems: 'center', 
-                                                gap: 10, 
-                                                padding: '8px 16px 8px 56px',
-                                                borderBottom: idx < def.equipements.length - 1 ? `1px dashed ${COLORS.border}` : 'none',
-                                                fontSize: 12
-                                            } 
-                                        },
-                                            h('span', { style: { width: 20, height: 20, borderRadius: '50%', background: COLORS.primary, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 600, flexShrink: 0 } }, idx + 1),
-                                            h('div', { style: { flex: 1, minWidth: 0 } },
-                                                h('div', { style: { fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, eq.ascenseur || eq.code || '-'),
-                                                h('div', { style: { fontSize: 11, color: COLORS.muted } }, eq.adresse || '', eq.adresse && eq.ville ? ', ' : '', eq.ville || '')
+                                        // Trier les fréquences (plus fréquent en premier)
+                                        const frequences = Object.keys(parFrequence).map(Number).sort((a, b) => b - a);
+                                        
+                                        return frequences.map(freq => h('div', { key: freq },
+                                            // Header du groupe de fréquence
+                                            h('div', { style: { padding: '6px 16px 6px 40px', background: getFrequenceColor(freq) + '10', borderBottom: `1px solid ${COLORS.border}`, display: 'flex', alignItems: 'center', gap: 8 } },
+                                                h('span', { style: { padding: '2px 8px', background: getFrequenceColor(freq) + '20', color: getFrequenceColor(freq), borderRadius: 10, fontSize: 11, fontWeight: 600 } }, formatCycle(freq)),
+                                                h('span', { style: { fontSize: 11, color: COLORS.muted } }, parFrequence[freq].length, ' appareil(s)')
                                             ),
-                                            h('span', { style: { fontSize: 10, color: COLORS.muted } }, formatCycle(getVisitesParAn(eq))),
-                                            joursDepuis !== null 
-                                                ? h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 10, background: enRetard ? COLORS.danger + '20' : COLORS.success + '20', color: enRetard ? COLORS.danger : COLORS.success } }, joursDepuis, 'j')
-                                                : h('span', { style: { fontSize: 10, color: COLORS.muted } }, '-')
-                                        );
-                                    })
+                                            // Liste des équipements de cette fréquence
+                                            parFrequence[freq].map((eq, i) => {
+                                                const derniereVisiteEq = visitesEntretien[eq.id_wsoucont];
+                                                const dateParsed = parseDate(derniereVisiteEq);
+                                                const joursDepuis = dateParsed ? Math.floor((new Date() - dateParsed) / 86400000) : null;
+                                                const cycleEq = getCycleJours(freq);
+                                                const enRetard = joursDepuis !== null && joursDepuis > cycleEq;
+                                                
+                                                return h('div', { 
+                                                    key: eq.id || eq.id_wsoucont || i, 
+                                                    style: { 
+                                                        display: 'flex', 
+                                                        alignItems: 'center', 
+                                                        gap: 10, 
+                                                        padding: '8px 16px 8px 56px',
+                                                        borderBottom: i < parFrequence[freq].length - 1 ? `1px dashed ${COLORS.border}` : 'none',
+                                                        fontSize: 12,
+                                                        cursor: 'pointer'
+                                                    },
+                                                    onClick: () => setSelectedEquipement(eq)
+                                                },
+                                                    h('span', { 
+                                                        style: { 
+                                                            width: 22, height: 22, borderRadius: '50%', 
+                                                            background: COLORS.primary, color: 'white', 
+                                                            display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                                                            fontSize: 10, fontWeight: 600, flexShrink: 0,
+                                                            cursor: 'pointer',
+                                                            transition: 'transform 0.1s',
+                                                            ':hover': { transform: 'scale(1.1)' }
+                                                        },
+                                                        title: 'Cliquez pour voir le détail'
+                                                    }, eq._idx + 1),
+                                                    h('div', { style: { flex: 1, minWidth: 0 } },
+                                                        h('div', { style: { fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, eq.ascenseur || eq.code || '-'),
+                                                        h('div', { style: { fontSize: 11, color: COLORS.muted } }, eq.adresse || '', eq.adresse && eq.ville ? ', ' : '', eq.ville || '')
+                                                    ),
+                                                    h('div', { style: { textAlign: 'right', minWidth: 80 } },
+                                                        dateParsed 
+                                                            ? h('div', { style: { fontSize: 10, color: enRetard ? COLORS.danger : COLORS.success, fontWeight: 500 } }, formatDate(dateParsed))
+                                                            : h('div', { style: { fontSize: 10, color: COLORS.muted } }, 'Jamais'),
+                                                        joursDepuis !== null && h('div', { style: { fontSize: 9, color: enRetard ? COLORS.danger : COLORS.muted } }, '(', joursDepuis, 'j)')
+                                                    )
+                                                );
+                                            })
+                                        ));
+                                    })()
                                 )
                             );
                         })
@@ -20170,6 +20241,115 @@ const TourneesTab = ({ equipements, user, showToast }) => {
                     );
                 })
             )
+    );
+    
+    // MODAL DÉTAIL ÉQUIPEMENT
+    const renderModalEquipement = () => selectedEquipement && h('div', { 
+        style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 },
+        onClick: () => setSelectedEquipement(null)
+    },
+        h('div', { 
+            style: { background: COLORS.card, borderRadius: 16, padding: 24, width: 550, maxWidth: '95%', maxHeight: '90vh', overflowY: 'auto' },
+            onClick: e => e.stopPropagation()
+        },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 } },
+                h('h3', { style: { margin: 0 } }, '🏢 Détail Équipement'),
+                h('button', { onClick: () => setSelectedEquipement(null), style: { background: 'none', border: 'none', fontSize: 20, cursor: 'pointer' } }, '×')
+            ),
+            
+            // Infos principales
+            h('div', { style: { padding: 16, background: COLORS.background, borderRadius: 12, marginBottom: 16 } },
+                h('div', { style: { fontSize: 18, fontWeight: 600, marginBottom: 8 } }, selectedEquipement.ascenseur || selectedEquipement.code || '-'),
+                h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 } },
+                    h('span', { style: { padding: '4px 10px', background: COLORS.primary + '20', color: COLORS.primary, borderRadius: 20, fontSize: 11 } }, '📍 ', selectedEquipement.secteur || '-'),
+                    h('span', { style: { padding: '4px 10px', background: getFrequenceColor(getVisitesParAn(selectedEquipement)) + '20', color: getFrequenceColor(getVisitesParAn(selectedEquipement)), borderRadius: 20, fontSize: 11 } }, formatCycle(getVisitesParAn(selectedEquipement)))
+                ),
+                h('div', { style: { fontSize: 13, color: COLORS.muted } },
+                    h('div', null, '📌 ', selectedEquipement.adresse || '-'),
+                    h('div', null, '🏙️ ', selectedEquipement.cp || '', ' ', selectedEquipement.ville || '-')
+                )
+            ),
+            
+            // Dernière visite
+            (() => {
+                const derniereVisiteEq = visitesEntretien[selectedEquipement.id_wsoucont];
+                const dateParsed = parseDate(derniereVisiteEq);
+                const joursDepuis = dateParsed ? Math.floor((new Date() - dateParsed) / 86400000) : null;
+                const cycleEq = getCycleJours(getVisitesParAn(selectedEquipement));
+                const enRetard = joursDepuis !== null && joursDepuis > cycleEq;
+                const prochaineVisite = dateParsed ? new Date(dateParsed.getTime() + cycleEq * 24 * 60 * 60 * 1000) : null;
+                
+                return h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 } },
+                    h('div', { style: { padding: 12, background: dateParsed ? (enRetard ? COLORS.danger + '10' : COLORS.success + '10') : COLORS.background, borderRadius: 8, border: `1px solid ${dateParsed ? (enRetard ? COLORS.danger : COLORS.success) : COLORS.border}` } },
+                        h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, '📅 Dernier entretien'),
+                        h('div', { style: { fontSize: 16, fontWeight: 600, color: dateParsed ? (enRetard ? COLORS.danger : COLORS.success) : COLORS.muted } }, 
+                            dateParsed ? formatDate(dateParsed) : 'Jamais'
+                        ),
+                        joursDepuis !== null && h('div', { style: { fontSize: 11, color: enRetard ? COLORS.danger : COLORS.muted } }, 'Il y a ', joursDepuis, ' jours')
+                    ),
+                    h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8, border: `1px solid ${COLORS.border}` } },
+                        h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, '📆 Prochain entretien'),
+                        h('div', { style: { fontSize: 16, fontWeight: 600, color: enRetard ? COLORS.danger : COLORS.text } }, 
+                            prochaineVisite ? formatDate(prochaineVisite) : '-'
+                        ),
+                        h('div', { style: { fontSize: 11, color: COLORS.muted } }, 'Cycle: ', cycleEq, ' jours')
+                    )
+                );
+            })(),
+            
+            // Infos techniques
+            h('div', { style: { fontWeight: 500, marginBottom: 8 } }, '🔧 Informations techniques'),
+            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 } },
+                h('div', { style: { padding: 10, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 10, color: COLORS.muted } }, 'Marque'),
+                    h('div', { style: { fontSize: 13, fontWeight: 500 } }, selectedEquipement.marque || '-')
+                ),
+                h('div', { style: { padding: 10, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 10, color: COLORS.muted } }, 'Type'),
+                    h('div', { style: { fontSize: 13, fontWeight: 500 } }, selectedEquipement.type_appareil || selectedEquipement.type || '-')
+                ),
+                h('div', { style: { padding: 10, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 10, color: COLORS.muted } }, 'N° Série'),
+                    h('div', { style: { fontSize: 13, fontWeight: 500 } }, selectedEquipement.numero_serie || selectedEquipement.n_serie || '-')
+                ),
+                h('div', { style: { padding: 10, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 10, color: COLORS.muted } }, 'Niveaux'),
+                    h('div', { style: { fontSize: 13, fontWeight: 500 } }, selectedEquipement.niveaux || selectedEquipement.nb_niveaux || '-')
+                ),
+                h('div', { style: { padding: 10, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 10, color: COLORS.muted } }, 'Charge'),
+                    h('div', { style: { fontSize: 13, fontWeight: 500 } }, selectedEquipement.charge ? `${selectedEquipement.charge} kg` : '-')
+                ),
+                h('div', { style: { padding: 10, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 10, color: COLORS.muted } }, 'Mise en service'),
+                    h('div', { style: { fontSize: 13, fontWeight: 500 } }, selectedEquipement.date_mise_service ? formatDate(selectedEquipement.date_mise_service) : '-')
+                )
+            ),
+            
+            // Contrat
+            h('div', { style: { fontWeight: 500, marginBottom: 8 } }, '📋 Contrat'),
+            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 } },
+                h('div', { style: { padding: 10, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 10, color: COLORS.muted } }, 'N° Contrat'),
+                    h('div', { style: { fontSize: 13, fontWeight: 500 } }, selectedEquipement.num_contrat || selectedEquipement.contrat || '-')
+                ),
+                h('div', { style: { padding: 10, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 10, color: COLORS.muted } }, 'Client'),
+                    h('div', { style: { fontSize: 13, fontWeight: 500 } }, selectedEquipement.client || selectedEquipement.nom_client || '-')
+                ),
+                h('div', { style: { padding: 10, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 10, color: COLORS.muted } }, 'Tournée'),
+                    h('div', { style: { fontSize: 13, fontWeight: 500 } }, selectedEquipement.ordre2 ? `Tournée ${selectedEquipement.ordre2}` : '-')
+                ),
+                h('div', { style: { padding: 10, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 10, color: COLORS.muted } }, 'ID WSouCont'),
+                    h('div', { style: { fontSize: 13, fontWeight: 500, fontFamily: 'monospace' } }, selectedEquipement.id_wsoucont || '-')
+                )
+            ),
+            
+            // Bouton fermer
+            h('button', { className: 'btn btn-ghost', style: { width: '100%' }, onClick: () => setSelectedEquipement(null) }, 'Fermer')
+        )
     );
     
     // MODALS
@@ -20333,6 +20513,7 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         activeView === 'definitions' && renderDefinitions(),
         activeView === 'techniciens' && renderTechniciens(),
         
+        renderModalEquipement(),
         renderModalPlanifier(),
         renderModalAutoPlan(),
         renderModalAbsences(),
