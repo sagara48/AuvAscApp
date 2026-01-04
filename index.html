@@ -19374,7 +19374,7 @@ const TourneesTab = ({ equipements, user, showToast }) => {
             grouped[key].nbVisitesParAn[visites] = (grouped[key].nbVisitesParAn[visites] || 0) + 1;
             
             // Utiliser la dernière visite d'entretien depuis la table pannes
-            const derniereVisiteEq = visitesEntretien[eq.code];
+            const derniereVisiteEq = visitesEntretien[eq.id_wsoucont];
             if (derniereVisiteEq) {
                 const datVisite = new Date(derniereVisiteEq);
                 if (!grouped[key].derniereVisite || datVisite > grouped[key].derniereVisite) {
@@ -19591,7 +19591,7 @@ const TourneesTab = ({ equipements, user, showToast }) => {
                 db.from('jours_feries').select('*').catch(() => ({ data: [] })),
                 db.from('lieux_depart').select('*').catch(() => ({ data: [] })),
                 // Charger les visites d'entretien depuis la table pannes
-                db.from('pannes').select('code, jour').like('libelle', 'Visite d%entretien%').order('jour', { ascending: false }).catch(() => ({ data: [] }))
+                db.from('pannes').select('id_wsoucont, jour').like('libelle', 'Visite d%entretien%').order('jour', { ascending: false }).catch(() => ({ data: [] }))
             ]);
             
             setTechniciens((techRes.data || []).map((t, idx) => ({
@@ -19601,13 +19601,13 @@ const TourneesTab = ({ equipements, user, showToast }) => {
             setJoursFeries(jfRes.data || []);
             setLieuxDepart(lieuxRes.data || []);
             
-            // Créer un map code -> dernière visite d'entretien
+            // Créer un map id_wsoucont -> dernière visite d'entretien
             const visites = {};
             (visitesRes.data || []).forEach(v => {
-                if (v.code && v.jour) {
-                    // Garder uniquement la plus récente pour chaque code
-                    if (!visites[v.code] || new Date(v.jour) > new Date(visites[v.code])) {
-                        visites[v.code] = v.jour;
+                if (v.id_wsoucont && v.jour) {
+                    // Garder uniquement la plus récente pour chaque id_wsoucont
+                    if (!visites[v.id_wsoucont] || new Date(v.jour) > new Date(visites[v.id_wsoucont])) {
+                        visites[v.id_wsoucont] = v.jour;
                     }
                 }
             });
@@ -19863,7 +19863,7 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         h('div', { style: { fontSize: 13, fontWeight: 500, marginBottom: 8 } }, '🏢 Équipements'),
         h('div', { style: { maxHeight: 280, overflowY: 'auto' } },
             selectedDef.equipements.map((eq, idx) => {
-                const derniereVisiteEq = visitesEntretien[eq.code];
+                const derniereVisiteEq = visitesEntretien[eq.id_wsoucont];
                 const joursDepuis = derniereVisiteEq ? Math.floor((new Date() - new Date(derniereVisiteEq)) / 86400000) : null;
                 return h('div', { key: eq.id || idx, style: { display: 'flex', alignItems: 'center', gap: 10, padding: 10, background: COLORS.background, borderRadius: 8, marginBottom: 6 } },
                     h('span', { style: { width: 24, height: 24, borderRadius: '50%', background: COLORS.primary, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, flexShrink: 0 } }, idx + 1),
@@ -19935,31 +19935,65 @@ const TourneesTab = ({ equipements, user, showToast }) => {
                     isExpanded && h('div', null,
                         tourneesGroupe.sort((a, b) => (a.ordre || 0) - (b.ordre || 0)).map(def => {
                             const badge = getStatutBadge(def.statut, def.joursRestants);
-                            return h('div', { 
-                                key: def.id, 
-                                style: { 
-                                    display: 'flex', 
-                                    alignItems: 'center', 
-                                    gap: 12, 
-                                    padding: '10px 16px', 
-                                    borderBottom: `1px solid ${COLORS.border}`,
-                                    cursor: 'pointer',
-                                    background: selectedDef?.id === def.id ? COLORS.primaryPastel : 'transparent'
+                            return h('div', { key: def.id },
+                                // Ligne de la tournée
+                                h('div', { 
+                                    style: { 
+                                        display: 'flex', 
+                                        alignItems: 'center', 
+                                        gap: 12, 
+                                        padding: '10px 16px', 
+                                        borderBottom: `1px solid ${COLORS.border}`,
+                                        cursor: 'pointer',
+                                        background: selectedDef?.id === def.id ? COLORS.primaryPastel : 'transparent'
+                                    },
+                                    onClick: () => setSelectedDef(selectedDef?.id === def.id ? null : def)
                                 },
-                                onClick: () => setSelectedDef(def)
-                            },
-                                h('span', { style: { width: 32, height: 32, borderRadius: 8, background: secteurColor + '20', color: secteurColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 14 } }, def.ordre),
-                                h('div', { style: { flex: 1 } },
-                                    h('div', { style: { fontWeight: 500, fontSize: 13 } }, 'Tournée ', def.ordre),
-                                    h('div', { style: { fontSize: 11, color: COLORS.muted } }, 
-                                        def.equipements.length, ' éq. • ',
-                                        Math.round(def.dureeTotale / 60 * 10) / 10, 'h • ',
-                                        def.derniereVisite ? `Dern: ${def.derniereVisite.toLocaleDateString('fr-FR')}` : 'Jamais'
-                                    )
+                                    h('span', { style: { fontSize: 12 } }, selectedDef?.id === def.id ? '▼' : '▶'),
+                                    h('span', { style: { width: 32, height: 32, borderRadius: 8, background: secteurColor + '20', color: secteurColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 14 } }, def.ordre),
+                                    h('div', { style: { flex: 1 } },
+                                        h('div', { style: { fontWeight: 500, fontSize: 13 } }, 'Tournée ', def.ordre),
+                                        h('div', { style: { fontSize: 11, color: COLORS.muted } }, 
+                                            def.equipements.length, ' éq. • ',
+                                            Math.round(def.dureeTotale / 60 * 10) / 10, 'h • ',
+                                            def.derniereVisite ? `Dern: ${def.derniereVisite.toLocaleDateString('fr-FR')}` : 'Jamais'
+                                        )
+                                    ),
+                                    h('span', { style: { padding: '3px 8px', background: getFrequenceColor(def.visitesParAn) + '20', color: getFrequenceColor(def.visitesParAn), borderRadius: 12, fontSize: 10 } }, formatCycle(def.visitesParAn)),
+                                    h('span', { style: badge.style }, badge.icon),
+                                    h('button', { className: 'btn btn-sm btn-ghost', onClick: e => { e.stopPropagation(); setSelectedDef(def); setShowPlanifier(true); } }, '📅')
                                 ),
-                                h('span', { style: { padding: '3px 8px', background: getFrequenceColor(def.visitesParAn) + '20', color: getFrequenceColor(def.visitesParAn), borderRadius: 12, fontSize: 10 } }, formatCycle(def.visitesParAn)),
-                                h('span', { style: badge.style }, badge.icon),
-                                h('button', { className: 'btn btn-sm btn-ghost', onClick: e => { e.stopPropagation(); setSelectedDef(def); setShowPlanifier(true); } }, '📅')
+                                // Liste des équipements (si tournée sélectionnée)
+                                selectedDef?.id === def.id && h('div', { style: { background: COLORS.background, borderBottom: `1px solid ${COLORS.border}` } },
+                                    def.equipements.map((eq, idx) => {
+                                        const derniereVisiteEq = visitesEntretien[eq.id_wsoucont];
+                                        const joursDepuis = derniereVisiteEq ? Math.floor((new Date() - new Date(derniereVisiteEq)) / 86400000) : null;
+                                        const cycleEq = getCycleJours(getVisitesParAn(eq));
+                                        const enRetard = joursDepuis !== null && joursDepuis > cycleEq;
+                                        
+                                        return h('div', { 
+                                            key: eq.id || eq.id_wsoucont || idx, 
+                                            style: { 
+                                                display: 'flex', 
+                                                alignItems: 'center', 
+                                                gap: 10, 
+                                                padding: '8px 16px 8px 56px',
+                                                borderBottom: idx < def.equipements.length - 1 ? `1px dashed ${COLORS.border}` : 'none',
+                                                fontSize: 12
+                                            } 
+                                        },
+                                            h('span', { style: { width: 20, height: 20, borderRadius: '50%', background: COLORS.primary, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 600, flexShrink: 0 } }, idx + 1),
+                                            h('div', { style: { flex: 1, minWidth: 0 } },
+                                                h('div', { style: { fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, eq.ascenseur || eq.code || '-'),
+                                                h('div', { style: { fontSize: 11, color: COLORS.muted } }, eq.adresse || '', eq.adresse && eq.ville ? ', ' : '', eq.ville || '')
+                                            ),
+                                            h('span', { style: { fontSize: 10, color: COLORS.muted } }, formatCycle(getVisitesParAn(eq))),
+                                            joursDepuis !== null 
+                                                ? h('span', { style: { fontSize: 10, padding: '2px 6px', borderRadius: 10, background: enRetard ? COLORS.danger + '20' : COLORS.success + '20', color: enRetard ? COLORS.danger : COLORS.success } }, joursDepuis, 'j')
+                                                : h('span', { style: { fontSize: 10, color: COLORS.muted } }, '-')
+                                        );
+                                    })
+                                )
                             );
                         })
                     )
