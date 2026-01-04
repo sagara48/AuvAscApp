@@ -19182,6 +19182,7 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
     // États pour le détail équipement
     const [eqDetailTab, setEqDetailTab] = useState('pannes'); // 'pannes', 'controles', 'devis'
     const [eqControlesYear, setEqControlesYear] = useState('');
+    const [eqItemDetail, setEqItemDetail] = useState(null); // { type: 'panne'|'devis', data: ... }
     
     // États pour le détail client
     const [clientDetailTab, setClientDetailTab] = useState('contrats'); // 'contrats', 'equipements'
@@ -19457,6 +19458,7 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
         if (type === 'equipement') {
             setEqDetailTab('pannes');
             setEqControlesYear('');
+            setEqItemDetail(null);
         } else if (type === 'client') {
             setClientDetailTab('contrats');
             setClientShowAllContrats(false);
@@ -20300,6 +20302,17 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
                    combined.includes('etanchéité') || combined.includes('5 ans') || combined.includes('technique');
         };
         
+        const isEntretien = (p) => {
+            const combined = ((p.libelle || '') + ' ' + (p.motif || '')).toLowerCase();
+            return combined.includes('entretien') || combined.includes('visite') || combined.includes('maintenance') || combined.includes('mensuel');
+        };
+        
+        const getItemType = (p) => {
+            if (isControle(p)) return { type: 'controle', label: 'Contrôle réglementaire', icon: '✅', color: COLORS.success };
+            if (isEntretien(p)) return { type: 'entretien', label: 'Entretien', icon: '🔧', color: COLORS.info };
+            return { type: 'panne', label: 'Panne', icon: '⚠️', color: COLORS.warning };
+        };
+        
         const eqPannesEntretiens = allEqPannes.filter(p => !isControle(p));
         const eqControles = allEqPannes.filter(p => isControle(p));
         
@@ -20335,9 +20348,150 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
             color: active ? 'white' : COLORS.text, borderRadius: 6, cursor: 'pointer', fontWeight: 500, fontSize: 13
         });
         
+        // ========== AFFICHAGE DÉTAIL D'UN ITEM ==========
+        if (eqItemDetail) {
+            const item = eqItemDetail.data;
+            const itemType = eqItemDetail.type;
+            
+            // Rendu du détail d'une panne/entretien/contrôle
+            if (itemType === 'panne') {
+                const typeInfo = getItemType(item);
+                return h('div', null,
+                    // Bouton retour
+                    h('button', { 
+                        className: 'btn btn-ghost btn-sm', 
+                        onClick: () => setEqItemDetail(null),
+                        style: { marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }
+                    }, '← Retour'),
+                    
+                    // Header coloré
+                    h('div', { 
+                        style: { 
+                            padding: 16, borderRadius: 12, marginBottom: 20, 
+                            background: `linear-gradient(135deg, ${typeInfo.color}20, ${typeInfo.color}10)`,
+                            border: `1px solid ${typeInfo.color}40`
+                        }
+                    },
+                        h('div', { style: { display: 'flex', alignItems: 'center', gap: 12 } },
+                            h('span', { style: { fontSize: 32 } }, typeInfo.icon),
+                            h('div', null,
+                                h('div', { style: { fontWeight: 600, fontSize: 16, color: typeInfo.color } }, typeInfo.label),
+                                h('div', { style: { fontSize: 13, color: COLORS.muted } }, `${formatDateFR(item.date_panne)} ${item.jour ? '(' + item.jour + ')' : ''}`)
+                            )
+                        )
+                    ),
+                    
+                    // Détails
+                    h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 } },
+                        h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                            h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'ID INTERVENTION'),
+                            h('div', { style: { fontWeight: 500, fontFamily: 'monospace' } }, `#${item.id_panne || '-'}`)
+                        ),
+                        h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                            h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'TECHNICIEN'),
+                            h('div', { style: { fontWeight: 500 } }, item.depanneur || '-')
+                        )
+                    ),
+                    
+                    h('div', { style: { padding: 16, background: COLORS.background, borderRadius: 8, marginBottom: 12 } },
+                        h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 6 } }, 'LIBELLÉ'),
+                        h('div', { style: { fontWeight: 500, lineHeight: 1.5 } }, item.libelle || '-')
+                    ),
+                    
+                    h('div', { style: { padding: 16, background: COLORS.background, borderRadius: 8, marginBottom: 12 } },
+                        h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 6 } }, 'MOTIF / DÉTAIL'),
+                        h('div', { style: { lineHeight: 1.5 } }, item.motif || '-')
+                    ),
+                    
+                    h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 } },
+                        h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                            h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'HEURE DÉBUT'),
+                            h('div', { style: { fontWeight: 500 } }, formatHeureFR(item.heure_inter) || '-')
+                        ),
+                        h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                            h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'HEURE FIN'),
+                            h('div', { style: { fontWeight: 500 } }, formatHeureFR(item.heure_fin) || '-')
+                        ),
+                        h('div', { style: { padding: 12, background: typeInfo.color + '20', borderRadius: 8 } },
+                            h('div', { style: { fontSize: 11, color: typeInfo.color, marginBottom: 4 } }, 'DURÉE'),
+                            h('div', { style: { fontWeight: 700, color: typeInfo.color } }, item.duree ? `${item.duree} min` : '-')
+                        )
+                    ),
+                    
+                    item.note && h('div', { style: { padding: 16, background: COLORS.warningPastel, borderRadius: 8, marginBottom: 12 } },
+                        h('div', { style: { fontSize: 11, color: COLORS.warning, marginBottom: 6 } }, '📝 NOTES / OBSERVATIONS'),
+                        h('div', { style: { lineHeight: 1.5 } }, item.note)
+                    ),
+                    
+                    item.cause && h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8, marginBottom: 12 } },
+                        h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'CAUSE'),
+                        h('div', null, item.cause)
+                    )
+                );
+            }
+            
+            // Rendu du détail d'un devis
+            if (itemType === 'devis') {
+                const statut = getDevisStatut(item.statut);
+                return h('div', null,
+                    // Bouton retour
+                    h('button', { 
+                        className: 'btn btn-ghost btn-sm', 
+                        onClick: () => setEqItemDetail(null),
+                        style: { marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }
+                    }, '← Retour'),
+                    
+                    // Header coloré
+                    h('div', { 
+                        style: { 
+                            padding: 16, borderRadius: 12, marginBottom: 20, 
+                            background: `linear-gradient(135deg, ${COLORS.purple}20, ${COLORS.purple}10)`,
+                            border: `1px solid ${COLORS.purple}40`
+                        }
+                    },
+                        h('div', { style: { display: 'flex', alignItems: 'center', gap: 12 } },
+                            h('span', { style: { fontSize: 32 } }, '📄'),
+                            h('div', null,
+                                h('div', { style: { fontWeight: 600, fontSize: 16, color: COLORS.purple } }, `Devis ${item.numero || '#' + item.id_devis}`),
+                                h('div', { style: { fontSize: 13, color: COLORS.muted } }, formatDateFR(item.date_devis))
+                            )
+                        )
+                    ),
+                    
+                    // Statut
+                    h('div', { style: { display: 'flex', gap: 12, marginBottom: 16 } },
+                        h('div', { style: { flex: 1, padding: 12, background: COLORS.background, borderRadius: 8 } },
+                            h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'STATUT'),
+                            h('span', { className: 'badge', style: { background: statut.bg, color: statut.color } }, statut.label)
+                        ),
+                        item._date_acceptation && h('div', { style: { flex: 1, padding: 12, background: COLORS.background, borderRadius: 8 } },
+                            h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'DATE ACCEPTATION'),
+                            h('div', { style: { fontWeight: 500 } }, formatDateFR(item._date_acceptation))
+                        )
+                    ),
+                    
+                    h('div', { style: { padding: 16, background: COLORS.background, borderRadius: 8, marginBottom: 12 } },
+                        h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 6 } }, 'OBJET'),
+                        h('div', { style: { lineHeight: 1.5 } }, item.objet || '-')
+                    ),
+                    
+                    h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8, marginBottom: 12 } },
+                        h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'CLIENT'),
+                        h('div', { style: { fontWeight: 500 } }, item._clientNom || item.client || '-')
+                    ),
+                    
+                    item.commentaire && h('div', { style: { padding: 16, background: COLORS.infoPastel, borderRadius: 8, marginBottom: 12 } },
+                        h('div', { style: { fontSize: 11, color: COLORS.info, marginBottom: 6 } }, '💬 COMMENTAIRE'),
+                        h('div', { style: { lineHeight: 1.5 } }, item.commentaire)
+                    )
+                );
+            }
+        }
+        
+        // ========== AFFICHAGE NORMAL (LISTE) ==========
         const renderItem = (item, type, borderColor) => h('div', { 
             key: item.id_panne || item.id_devis, 
-            onClick: () => openDetail(type, item),
+            onClick: () => setEqItemDetail({ type, data: item }),
             style: { padding: 12, background: COLORS.background, borderRadius: 8, marginBottom: 8, borderLeft: `4px solid ${borderColor}`, cursor: 'pointer', transition: 'transform 0.1s' },
             onMouseOver: e => e.currentTarget.style.transform = 'translateX(4px)',
             onMouseOut: e => e.currentTarget.style.transform = 'translateX(0)'
