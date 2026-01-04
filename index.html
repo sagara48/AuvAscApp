@@ -27824,786 +27824,384 @@ const AlertsPageInline = ({ data, user, refresh, showToast }) => {
 
 // Progilift Sync Tab pour Settings - Version 3.0 avec 6 étapes et exécution individuelle
 const ProgiliftSyncTab = ({ data, user, refresh, showToast }) => {
-    const [apiUrl, setApiUrl] = useState(localStorage.getItem('progilift_api_url') || 'https://auv-asc-app.vercel.app');
+    const [apiUrl, setApiUrl] = useState(localStorage.getItem('progilift_api_url') || '');
     const [isRunning, setIsRunning] = useState(false);
     const [shouldStop, setShouldStop] = useState(false);
-    const [progress, setProgress] = useState({ percent: 0, text: 'Cliquez sur "Sync Complète" pour démarrer' });
-    const [stats, setStats] = useState({ arrets: 0, equipements: 0, passages: 0, pannes: 0, devis: 0, clients: 0, contrats: 0 });
+    const [progress, setProgress] = useState({ percent: 0, step: 'En attente...', stats: '0 / 0', visible: false });
     const [logs, setLogs] = useState([]);
-    const [history, setHistory] = useState([]);
-    const [apiInfo, setApiInfo] = useState(null);
-    const [connectionStatus, setConnectionStatus] = useState('disconnected'); // disconnected, testing, connected, error
-    const [stepStatus, setStepStatus] = useState({ '1': 'idle', '2': 'idle', '3': 'idle', '4': 'idle', '5': 'idle', '6': 'idle' });
-    const [stepResults, setStepResults] = useState({});
-    const [selectedSector, setSelectedSector] = useState('all');
-    const [selectedPeriodPannes, setSelectedPeriodPannes] = useState('all');
-    const [selectedPeriodDevis, setSelectedPeriodDevis] = useState('all');
+    const [stepStatus, setStepStatus] = useState({ '0': 'pending', '1': 'pending', '2': 'pending', '2b': 'pending', '3': 'pending', '4': 'pending' });
     const shouldStopRef = useRef(false);
     const logsEndRef = useRef(null);
     
-    const TOTAL_SECTORS = 22;
-    const TOTAL_PERIODS_PANNES = 2;
-    const TOTAL_PERIODS_DEVIS = 4;
-    
-    // Charger l'historique et config au démarrage
+    // Initialisation
     useEffect(() => {
-        const savedHistory = JSON.parse(localStorage.getItem('progilift_sync_history') || '[]');
-        setHistory(savedHistory);
         const savedUrl = localStorage.getItem('progilift_api_url');
-        if (savedUrl) {
-            setApiUrl(savedUrl);
-        }
-        addLog('Dashboard Progilift Sync v3.0 initialisé', 'info');
+        if (savedUrl) setApiUrl(savedUrl);
+        addLog('Dashboard Progilift Sync initialisé', 'info');
+        
+        // Populate selects
+        const s2 = document.getElementById('sector2Select');
+        const s2b = document.getElementById('sector2bSelect');
+        const p3 = document.getElementById('period3Select');
+        if (s2) { for (let i = 0; i < 22; i++) s2.innerHTML += `<option value="${i}">${i}</option>`; }
+        if (s2b) { for (let i = 0; i < 22; i++) s2b.innerHTML += `<option value="${i}">${i}</option>`; }
+        if (p3) { for (let i = 0; i < 7; i++) p3.innerHTML += `<option value="${i}">${i}</option>`; }
     }, []);
     
     // Auto-scroll logs
     useEffect(() => {
-        if (logsEndRef.current) {
-            logsEndRef.current.scrollTop = logsEndRef.current.scrollHeight;
-        }
+        if (logsEndRef.current) logsEndRef.current.scrollTop = logsEndRef.current.scrollHeight;
     }, [logs]);
     
-    // Ajouter un log
     const addLog = (msg, type = 'info') => {
         const time = new Date().toLocaleTimeString('fr-FR');
-        setLogs(prev => [...prev.slice(-199), { time, msg, type }]);
+        setLogs(prev => [{ time, msg, type }, ...prev.slice(0, 99)]);
     };
     
-    // Appeler l'API
-    const callApi = async (endpoint) => {
-        const baseUrl = apiUrl.replace(/\/$/, '');
-        const url = `${baseUrl}/api/sync${endpoint}`;
-        const response = await fetch(url);
-        const text = await response.text();
-        try {
-            return JSON.parse(text);
-        } catch {
-            throw new Error(`Invalid JSON: ${text.substring(0, 100)}`);
-        }
-    };
+    const clearLogs = () => setLogs([]);
     
-    // Sauvegarder config
     const saveConfig = () => {
-        if (!apiUrl.trim()) {
-            addLog('Veuillez entrer une URL API', 'error');
-            showToast('URL API requise', 'error');
-            return;
-        }
         localStorage.setItem('progilift_api_url', apiUrl);
-        addLog('Configuration sauvegardée: ' + apiUrl, 'success');
+        addLog('Configuration sauvegardée', 'success');
         showToast('Configuration sauvegardée', 'success');
     };
     
-    // Tester la connexion
     const testConnection = async () => {
-        if (!apiUrl.trim()) {
-            addLog('Veuillez entrer une URL API', 'error');
+        if (!apiUrl) {
+            addLog('URL API non configurée', 'error');
             return;
         }
-        setConnectionStatus('testing');
-        addLog('🔌 Test de connexion en cours...', 'info');
-        
+        addLog('Test de connexion...', 'info');
         try {
-            const data = await callApi('');
-            if (data.status === 'ready' || data.status === 'success') {
-                setConnectionStatus('connected');
-                addLog(`✅ Connexion réussie - ${data.message || 'API opérationnelle'}`, 'success');
-                setApiInfo({
-                    version: data.version || 'N/A',
-                    sectors: data.config?.sectors_count || 22,
-                    periods: data.config?.periods_count || 2,
-                    devisPeriods: data.config?.devis_periods_count || 4,
-                    operations: data.progilift_info?.available_operations?.length || 0
-                });
-                showToast('Connexion API réussie!', 'success');
+            const resp = await fetch(apiUrl);
+            const data = await resp.json();
+            if (data.status === 'ready') {
+                addLog(`✅ Connexion OK - ${data.message}`, 'success');
+                showToast('Connexion API réussie', 'success');
             } else {
-                setConnectionStatus('error');
-                addLog(`⚠️ Réponse inattendue: ${JSON.stringify(data)}`, 'warning');
+                addLog(`⚠️ Réponse: ${JSON.stringify(data)}`, 'warning');
             }
         } catch (e) {
-            setConnectionStatus('error');
-            addLog(`❌ Erreur de connexion: ${e.message}`, 'error');
-            showToast('Erreur: ' + e.message, 'error');
-            setApiInfo(null);
+            addLog(`❌ Erreur: ${e.message}`, 'error');
         }
     };
     
-    // Mettre à jour le statut d'une étape
-    const updateStepStatus = (step, status) => {
-        setStepStatus(prev => ({ ...prev, [step]: status }));
-    };
-    
-    // Afficher le résultat d'une étape
-    const showStepResult = (step, result) => {
-        setStepResults(prev => ({ ...prev, [step]: result }));
-    };
-    
-    // Sauvegarder dans l'historique
-    const saveToHistory = (entry) => {
-        const newHistory = [entry, ...history].slice(0, 50);
-        setHistory(newHistory);
-        localStorage.setItem('progilift_sync_history', JSON.stringify(newHistory));
-    };
-    
-    // Exécuter une seule étape
-    const executeSingleStep = async (step, params = {}) => {
-        if (!apiUrl.trim()) {
-            addLog('Veuillez configurer l\'URL API', 'error');
+    const runStep = async (params) => {
+        if (!apiUrl) {
+            addLog('URL API non configurée', 'error');
             return null;
         }
-        
-        updateStepStatus(step, 'running');
-        let queryParams = `step=${step}`;
-        if (params.sector !== undefined) queryParams += `&sector=${params.sector}`;
-        if (params.period !== undefined) queryParams += `&period=${params.period}`;
-        
-        addLog(`🔄 Exécution étape ${step}${params.sector !== undefined ? ` (secteur ${params.sector})` : ''}${params.period !== undefined ? ` (période ${params.period})` : ''}...`, 'info');
+        const url = `${apiUrl}?${params}`;
+        addLog(`🔄 ${params}`, 'info');
         
         try {
-            const response = await callApi(`?${queryParams}`);
+            const resp = await fetch(url);
+            const data = await resp.json();
             
-            if (response.status === 'success' || response.status !== 'error') {
-                updateStepStatus(step, 'success');
-                const count = response.arrets || response.equipements || response.pannes || response.devis || response.clients || response.contrats || 0;
-                addLog(`✅ Étape ${step} terminée: ${response.message || count + ' enregistrements'}`, 'success');
-                showStepResult(step, response);
-                
-                // Mettre à jour les stats
-                setStats(prev => {
-                    const newStats = { ...prev };
-                    if (response.arrets) newStats.arrets += response.arrets;
-                    if (response.equipements) newStats.equipements += response.equipements;
-                    if (response.passages) newStats.passages += response.passages;
-                    if (response.pannes) newStats.pannes += response.pannes;
-                    if (response.devis) newStats.devis += response.devis;
-                    if (response.clients) newStats.clients += response.clients;
-                    if (response.contrats) newStats.contrats += response.contrats;
-                    return newStats;
-                });
-                
-                return response;
-            } else {
-                throw new Error(response.message || 'Erreur inconnue');
+            if (data.status === 'success') {
+                const details = Object.entries(data)
+                    .filter(([k]) => !['status', 'next', 'step'].includes(k))
+                    .map(([k, v]) => `${k}: ${v}`)
+                    .join(', ');
+                addLog(`✅ ${params} - ${details}`, 'success');
+            } else if (data.status === 'done') {
+                addLog(`✅ ${params} - Terminé`, 'success');
+            } else if (data.status === 'error') {
+                addLog(`❌ ${params} - ${data.message}`, 'error');
             }
+            return data;
         } catch (e) {
-            updateStepStatus(step, 'error');
-            addLog(`❌ Étape ${step} échouée: ${e.message}`, 'error');
-            showStepResult(step, { error: e.message });
+            addLog(`❌ ${params} - ${e.message}`, 'error');
             return null;
         }
     };
     
-    // Exécuter une étape individuelle (depuis le bouton)
-    const runStep = async (step) => {
-        if (isRunning) return;
+    const runSequence = async (baseStep, param, count) => {
+        if (isRunning) {
+            addLog('Une synchronisation est déjà en cours', 'warning');
+            return;
+        }
         setIsRunning(true);
+        shouldStopRef.current = false;
+        setShouldStop(false);
         
-        if (step === '2') {
-            if (selectedSector === 'all') {
-                await runAllSectors();
-            } else {
-                await executeSingleStep('2', { sector: parseInt(selectedSector) });
-            }
-        } else if (step === '3') {
-            if (selectedPeriodPannes === 'all') {
-                await runAllPeriods('3', TOTAL_PERIODS_PANNES);
-            } else {
-                await executeSingleStep('3', { period: parseInt(selectedPeriodPannes) });
-            }
-        } else if (step === '4') {
-            if (selectedPeriodDevis === 'all') {
-                await runAllPeriods('4', TOTAL_PERIODS_DEVIS);
-            } else {
-                await executeSingleStep('4', { period: parseInt(selectedPeriodDevis) });
-            }
-        } else {
-            await executeSingleStep(step);
+        for (let i = 0; i < count && !shouldStopRef.current; i++) {
+            setProgress({ percent: (i / count) * 100, step: `${baseStep} - ${param}=${i}`, stats: `${i} / ${count}`, visible: true });
+            await runStep(`${baseStep}&${param}=${i}`);
+            await new Promise(r => setTimeout(r, 500));
         }
         
+        setProgress({ percent: 100, step: 'Terminé', stats: `${count} / ${count}`, visible: true });
         setIsRunning(false);
     };
     
-    // Exécuter tous les secteurs (étape 2)
-    const runAllSectors = async () => {
-        updateStepStatus('2', 'running');
-        let totalEquip = 0;
-        let totalPassages = 0;
-        
-        for (let i = 0; i < TOTAL_SECTORS && !shouldStopRef.current; i++) {
-            const pct = Math.round(((i + 1) / TOTAL_SECTORS) * 100);
-            setProgress({ percent: pct, text: `Secteur ${i}/${TOTAL_SECTORS - 1}...` });
-            addLog(`🔄 Secteur ${i}/${TOTAL_SECTORS - 1}...`, 'info');
-            
-            try {
-                const response = await callApi(`?step=2&sector=${i}`);
-                if (response.status !== 'error') {
-                    totalEquip += response.equipements || 0;
-                    totalPassages += response.passages || 0;
-                    addLog(`✅ Secteur ${i}: ${response.equipements || 0} équipements, ${response.passages || 0} passages`, 'success');
-                }
-            } catch (e) {
-                addLog(`⚠️ Secteur ${i}: ${e.message}`, 'warning');
-            }
-            
-            await new Promise(r => setTimeout(r, 300));
-        }
-        
-        updateStepStatus('2', 'success');
-        setStats(prev => ({ ...prev, equipements: prev.equipements + totalEquip, passages: prev.passages + totalPassages }));
-        showStepResult('2', { total_equipements: totalEquip, total_passages: totalPassages, secteurs: TOTAL_SECTORS });
-        addLog(`✅ Tous les secteurs terminés: ${totalEquip} équipements, ${totalPassages} passages`, 'success');
-    };
-    
-    // Exécuter toutes les périodes (étapes 3 ou 4)
-    const runAllPeriods = async (step, count) => {
-        updateStepStatus(step, 'running');
-        let total = 0;
-        
-        for (let i = 0; i < count && !shouldStopRef.current; i++) {
-            addLog(`🔄 Période ${i}/${count - 1}...`, 'info');
-            
-            try {
-                const response = await callApi(`?step=${step}&period=${i}`);
-                if (response.status !== 'error') {
-                    const cnt = response.pannes || response.devis || 0;
-                    total += cnt;
-                    addLog(`✅ Période ${i}: ${cnt} enregistrements`, 'success');
-                }
-            } catch (e) {
-                addLog(`⚠️ Période ${i}: ${e.message}`, 'warning');
-            }
-            
-            await new Promise(r => setTimeout(r, 300));
-        }
-        
-        updateStepStatus(step, 'success');
-        const statKey = step === '3' ? 'pannes' : 'devis';
-        setStats(prev => ({ ...prev, [statKey]: prev[statKey] + total }));
-        showStepResult(step, { total, periodes: count });
-        addLog(`✅ Toutes les périodes terminées: ${total} enregistrements`, 'success');
-    };
-    
-    // Synchronisation complète - 6 ÉTAPES
     const startFullSync = async () => {
-        if (isRunning || !apiUrl.trim()) {
-            if (!apiUrl.trim()) addLog('Veuillez configurer l\'URL API', 'error');
+        if (isRunning) {
+            addLog('Une synchronisation est déjà en cours', 'warning');
+            return;
+        }
+        if (!apiUrl) {
+            addLog('URL API non configurée', 'error');
             return;
         }
         
         setIsRunning(true);
         shouldStopRef.current = false;
         setShouldStop(false);
-        setStats({ arrets: 0, equipements: 0, passages: 0, pannes: 0, devis: 0, clients: 0, contrats: 0 });
-        setStepStatus({ '1': 'idle', '2': 'idle', '3': 'idle', '4': 'idle', '5': 'idle', '6': 'idle' });
-        setStepResults({});
+        setStepStatus({ '0': 'pending', '1': 'pending', '2': 'pending', '2b': 'pending', '3': 'pending', '4': 'pending' });
+        setProgress({ percent: 0, step: 'Démarrage...', stats: '0 / 54', visible: true });
         
-        const startTime = Date.now();
-        addLog('🚀 Démarrage de la synchronisation complète (6 étapes)...', 'info');
-        
-        try {
-            // ÉTAPE 1: ARRÊTS
-            setProgress({ percent: 2, text: 'Étape 1/6 - Arrêts' });
-            await executeSingleStep('1');
-            if (shouldStopRef.current) throw new Error('Arrêt demandé');
-            await new Promise(r => setTimeout(r, 500));
-            
-            // ÉTAPE 2: ÉQUIPEMENTS (tous secteurs)
-            setProgress({ percent: 10, text: 'Étape 2/6 - Équipements' });
-            await runAllSectors();
-            if (shouldStopRef.current) throw new Error('Arrêt demandé');
-            await new Promise(r => setTimeout(r, 500));
-            
-            // ÉTAPE 3: PANNES (toutes périodes)
-            setProgress({ percent: 50, text: 'Étape 3/6 - Pannes' });
-            addLog('📊 Synchronisation des pannes...', 'info');
-            await runAllPeriods('3', TOTAL_PERIODS_PANNES);
-            if (shouldStopRef.current) throw new Error('Arrêt demandé');
-            await new Promise(r => setTimeout(r, 500));
-            
-            // ÉTAPE 4: DEVIS (toutes périodes)
-            setProgress({ percent: 65, text: 'Étape 4/6 - Devis' });
-            addLog('📄 Synchronisation des devis...', 'info');
-            await runAllPeriods('4', TOTAL_PERIODS_DEVIS);
-            if (shouldStopRef.current) throw new Error('Arrêt demandé');
-            await new Promise(r => setTimeout(r, 500));
-            
-            // ÉTAPE 5: CLIENTS
-            setProgress({ percent: 80, text: 'Étape 5/6 - Clients' });
-            await executeSingleStep('5');
-            if (shouldStopRef.current) throw new Error('Arrêt demandé');
-            await new Promise(r => setTimeout(r, 500));
-            
-            // ÉTAPE 6: CONTRATS
-            setProgress({ percent: 95, text: 'Étape 6/6 - Contrats' });
-            await executeSingleStep('6');
-            
-            // Terminé !
-            const duration = Math.round((Date.now() - startTime) / 1000);
-            setProgress({ percent: 100, text: 'Synchronisation terminée!' });
-            addLog(`🎉 SYNCHRONISATION COMPLÈTE TERMINÉE en ${duration}s`, 'success');
-            
-            saveToHistory({ date: new Date().toISOString(), status: 'success', duration, stats: { ...stats } });
-            showToast(`Synchronisation terminée en ${duration}s`, 'success');
-            refresh();
-            
-        } catch (e) {
-            addLog(`❌ Erreur: ${e.message}`, 'error');
-            setProgress({ percent: 0, text: 'Erreur - Synchronisation interrompue' });
-            showToast('Erreur: ' + e.message, 'error');
-            saveToHistory({ date: new Date().toISOString(), status: 'error', error: e.message });
-        }
-        
-        setIsRunning(false);
-    };
-    
-    // Sync rapide (cron)
-    const startCron = async () => {
-        if (isRunning || !apiUrl.trim()) return;
-        
-        setIsRunning(true);
-        addLog('⚡ Démarrage de la sync rapide (CRON - arrêts + pannes récentes)...', 'info');
-        setProgress({ percent: 50, text: 'Sync rapide en cours...' });
+        const totalSteps = 1 + 1 + 22 + 22 + 7 + 1; // 54 total
+        let currentStep = 0;
         
         try {
-            const result = await callApi('?mode=cron');
-            if (result.status === 'success') {
-                setStats(prev => ({ 
-                    ...prev, 
-                    arrets: result.stats?.arrets || 0, 
-                    pannes: result.stats?.pannes || 0 
-                }));
-                setProgress({ percent: 100, text: 'Sync rapide terminée!' });
-                addLog(`✅ Sync CRON terminée: ${result.message}`, 'success');
-                saveToHistory({ date: new Date().toISOString(), status: 'cron', duration: result.duration, stats: result.stats });
-                showToast('Sync rapide terminée', 'success');
-            } else {
-                throw new Error(result.message || 'Erreur inconnue');
+            // Step 0: Types Planning
+            setStepStatus(s => ({ ...s, '0': 'current' }));
+            setProgress({ percent: (currentStep / totalSteps) * 100, step: 'Step 0: Types Planning', stats: `${currentStep} / ${totalSteps}`, visible: true });
+            await runStep('step=0');
+            setStepStatus(s => ({ ...s, '0': 'completed' }));
+            currentStep++;
+            if (shouldStopRef.current) throw new Error('Arrêté par l\'utilisateur');
+            
+            // Step 1: Arrêts
+            setStepStatus(s => ({ ...s, '1': 'current' }));
+            setProgress({ percent: (currentStep / totalSteps) * 100, step: 'Step 1: Arrêts', stats: `${currentStep} / ${totalSteps}`, visible: true });
+            await runStep('step=1');
+            setStepStatus(s => ({ ...s, '1': 'completed' }));
+            currentStep++;
+            if (shouldStopRef.current) throw new Error('Arrêté par l\'utilisateur');
+            
+            // Step 2: Équipements (22 secteurs)
+            setStepStatus(s => ({ ...s, '2': 'current' }));
+            for (let i = 0; i < 22 && !shouldStopRef.current; i++) {
+                setProgress({ percent: (currentStep / totalSteps) * 100, step: `Step 2: Équipements - Secteur ${i}/21`, stats: `${currentStep} / ${totalSteps}`, visible: true });
+                await runStep(`step=2&sector=${i}`);
+                currentStep++;
+                await new Promise(r => setTimeout(r, 300));
             }
+            setStepStatus(s => ({ ...s, '2': 'completed' }));
+            if (shouldStopRef.current) throw new Error('Arrêté par l\'utilisateur');
+            
+            // Step 2b: Passages (22 secteurs)
+            setStepStatus(s => ({ ...s, '2b': 'current' }));
+            for (let i = 0; i < 22 && !shouldStopRef.current; i++) {
+                setProgress({ percent: (currentStep / totalSteps) * 100, step: `Step 2b: Passages - Secteur ${i}/21`, stats: `${currentStep} / ${totalSteps}`, visible: true });
+                await runStep(`step=2b&sector=${i}`);
+                currentStep++;
+                await new Promise(r => setTimeout(r, 300));
+            }
+            setStepStatus(s => ({ ...s, '2b': 'completed' }));
+            if (shouldStopRef.current) throw new Error('Arrêté par l\'utilisateur');
+            
+            // Step 3: Pannes (7 périodes)
+            setStepStatus(s => ({ ...s, '3': 'current' }));
+            for (let i = 0; i < 7 && !shouldStopRef.current; i++) {
+                setProgress({ percent: (currentStep / totalSteps) * 100, step: `Step 3: Pannes - Période ${i}/6`, stats: `${currentStep} / ${totalSteps}`, visible: true });
+                await runStep(`step=3&period=${i}`);
+                currentStep++;
+                await new Promise(r => setTimeout(r, 300));
+            }
+            setStepStatus(s => ({ ...s, '3': 'completed' }));
+            if (shouldStopRef.current) throw new Error('Arrêté par l\'utilisateur');
+            
+            // Step 4: Nb Visites
+            setStepStatus(s => ({ ...s, '4': 'current' }));
+            setProgress({ percent: (currentStep / totalSteps) * 100, step: 'Step 4: Mise à jour Nb Visites', stats: `${currentStep} / ${totalSteps}`, visible: true });
+            await runStep('step=4');
+            setStepStatus(s => ({ ...s, '4': 'completed' }));
+            currentStep++;
+            
+            setProgress({ percent: 100, step: '🎉 Synchronisation complète terminée!', stats: `${totalSteps} / ${totalSteps}`, visible: true });
+            addLog('🎉 SYNC COMPLÈTE TERMINÉE!', 'success');
+            showToast('Synchronisation complète terminée!', 'success');
+            
         } catch (e) {
-            addLog(`❌ Sync CRON échouée: ${e.message}`, 'error');
-            setProgress({ percent: 0, text: 'Erreur' });
+            addLog(`⚠️ ${e.message}`, 'warning');
         }
         
         setIsRunning(false);
     };
     
-    // Arrêter la sync
     const stopSync = () => {
         shouldStopRef.current = true;
         setShouldStop(true);
-        addLog('⏹️ Arrêt demandé par l\'utilisateur...', 'warning');
-    };
-    
-    // Réinitialiser
-    const resetAllSteps = () => {
-        setStepStatus({ '1': 'idle', '2': 'idle', '3': 'idle', '4': 'idle', '5': 'idle', '6': 'idle' });
-        setStepResults({});
-        setStats({ arrets: 0, equipements: 0, passages: 0, pannes: 0, devis: 0, clients: 0, contrats: 0 });
-        setProgress({ percent: 0, text: 'Réinitialisé' });
-        addLog('🔄 Réinitialisation effectuée', 'info');
-    };
-    
-    // Effacer historique
-    const clearHistory = () => {
-        setHistory([]);
-        localStorage.removeItem('progilift_sync_history');
-        addLog('Historique effacé', 'info');
-    };
-    
-    // Effacer logs
-    const clearLogs = () => {
-        setLogs([]);
-        addLog('Journal effacé', 'info');
+        addLog('⏹️ Arrêt demandé...', 'warning');
     };
     
     // Styles
-    const cardStyle = {
-        background: COLORS.card, borderRadius: 16, padding: 20, marginBottom: 20,
-        border: `1px solid ${COLORS.border}`, boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
+    const cardStyle = { background: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 20, border: '1px solid rgba(255,255,255,0.1)' };
+    const btnPrimary = { padding: '10px 20px', background: '#4fc3f7', border: 'none', borderRadius: 8, color: '#1a1a2e', fontWeight: 600, cursor: 'pointer' };
+    const btnSecondary = { padding: '10px 20px', background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: 8, color: '#fff', fontWeight: 600, cursor: 'pointer' };
+    const btnWarning = { padding: '10px 20px', background: '#ffa726', border: 'none', borderRadius: 8, color: '#1a1a2e', fontWeight: 600, cursor: 'pointer' };
+    const inputStyle = { flex: 1, minWidth: 250, padding: '12px 15px', border: '1px solid #333', borderRadius: 8, background: '#1a1a2e', color: '#fff', fontSize: '0.9rem' };
+    const selectStyle = { padding: 10, borderRadius: 8, background: '#1a1a2e', color: '#fff', border: '1px solid #333' };
+    
+    const getStepBadgeStyle = (status) => {
+        const base = { padding: '8px 15px', borderRadius: 20, fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: 6 };
+        if (status === 'completed') return { ...base, background: 'rgba(102, 187, 106, 0.2)', color: '#66bb6a' };
+        if (status === 'current') return { ...base, background: 'rgba(79, 195, 247, 0.2)', color: '#4fc3f7', animation: 'pulse 1s infinite' };
+        return { ...base, background: 'rgba(0,0,0,0.2)', opacity: 0.5 };
     };
     
-    const cardHeaderStyle = {
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16
-    };
+    const logColors = { info: 'rgba(79, 195, 247, 0.1)', success: 'rgba(102, 187, 106, 0.1)', error: 'rgba(239, 83, 80, 0.1)', warning: 'rgba(255, 167, 38, 0.1)' };
+    const logTextColors = { info: '#fff', success: '#66bb6a', error: '#ef5350', warning: '#ffa726' };
     
-    const cardTitleStyle = {
-        display: 'flex', alignItems: 'center', gap: 10, fontSize: 16, fontWeight: 600, color: COLORS.text
-    };
-    
-    const inputStyle = {
-        flex: 1, padding: '12px 16px', background: COLORS.background, border: `1px solid ${COLORS.border}`,
-        borderRadius: 10, color: COLORS.text, fontSize: 14, outline: 'none', minWidth: 250,
-        fontFamily: 'Monaco, Consolas, monospace'
-    };
-    
-    const selectStyle = {
-        padding: '8px 12px', background: COLORS.background, border: `1px solid ${COLORS.border}`,
-        borderRadius: 8, color: COLORS.text, fontSize: 13, outline: 'none', cursor: 'pointer'
-    };
-    
-    const btnStyle = (bg, disabled = false) => ({
-        padding: '12px 20px', background: disabled ? COLORS.muted : bg, color: 'white', border: 'none', borderRadius: 10,
-        fontSize: 14, fontWeight: 600, cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.6 : 1,
-        display: 'flex', alignItems: 'center', gap: 8, transition: 'all 0.2s', whiteSpace: 'nowrap'
-    });
-    
-    const btnOutlineStyle = {
-        padding: '8px 16px', background: 'transparent', border: `1px solid ${COLORS.border}`,
-        borderRadius: 8, color: COLORS.text, fontSize: 12, cursor: 'pointer', transition: 'all 0.2s'
-    };
-    
-    const stepBtnStyle = (disabled = false) => ({
-        width: '100%', padding: '10px', background: disabled ? COLORS.muted : COLORS.background,
-        border: `1px solid ${COLORS.border}`, borderRadius: 8, color: COLORS.text,
-        fontSize: 13, fontWeight: 600, cursor: disabled ? 'not-allowed' : 'pointer',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-        transition: 'all 0.2s', opacity: disabled ? 0.6 : 1
-    });
-    
-    // Connection status colors
-    const connectionColors = {
-        disconnected: COLORS.muted,
-        testing: COLORS.warning,
-        connected: COLORS.success,
-        error: COLORS.danger
-    };
-    
-    const connectionLabels = {
-        disconnected: 'Non connecté',
-        testing: 'Test en cours...',
-        connected: 'Connecté',
-        error: 'Erreur'
-    };
-    
-    // Step status colors
-    const stepStatusColors = {
-        idle: COLORS.muted,
-        running: COLORS.info,
-        success: COLORS.success,
-        error: COLORS.danger
-    };
-    
-    const stepStatusLabels = {
-        idle: 'En attente',
-        running: 'En cours...',
-        success: 'Terminé',
-        error: 'Erreur'
-    };
-    
-    // Log colors
-    const logColors = { info: '#58a6ff', success: '#3fb950', error: '#f85149', warning: '#d29922' };
-    
-    // 6 Étapes de synchronisation
-    const steps = [
-        { id: '1', num: '1', title: 'Appareils à l\'arrêt', desc: 'Récupère la liste des appareils actuellement à l\'arrêt.', hasParams: false },
-        { id: '2', num: '2', title: 'Équipements & Passages', desc: 'Synchronise les équipements par secteur (0-21).', hasParams: true, paramType: 'sector' },
-        { id: '3', num: '3', title: 'Pannes', desc: 'Synchronise l\'historique des pannes (2 périodes).', hasParams: true, paramType: 'period-pannes' },
-        { id: '4', num: '4', title: 'Devis', desc: 'Synchronise les devis (4 périodes).', hasParams: true, paramType: 'period-devis' },
-        { id: '5', num: '5', title: 'Clients', desc: 'Synchronise la base clients complète.', hasParams: false },
-        { id: '6', num: '6', title: 'Contrats', desc: 'Synchronise tous les contrats.', hasParams: false }
-    ];
-    
-    // Stats à afficher
-    const statsConfig = [
-        { key: 'arrets', label: 'Arrêts', color: COLORS.danger, icon: '🛑' },
-        { key: 'equipements', label: 'Équipements', color: COLORS.success, icon: '🏗️' },
-        { key: 'passages', label: 'Passages', color: COLORS.info, icon: '📋' },
-        { key: 'pannes', label: 'Pannes', color: COLORS.warning, icon: '⚠️' },
-        { key: 'devis', label: 'Devis', color: COLORS.purple, icon: '📄' },
-        { key: 'clients', label: 'Clients', color: COLORS.teal, icon: '👥' },
-        { key: 'contrats', label: 'Contrats', color: COLORS.secondary, icon: '📝' }
-    ];
-    
-    // Calculer les étapes complétées
-    const completedSteps = Object.values(stepStatus).filter(s => s === 'success').length;
-    
-    return h('div', { style: { padding: 0 } },
-        
+    return h('div', { style: { background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)', minHeight: '100%', color: '#fff', padding: 20, borderRadius: 12 } },
         // Header
-        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 16 } },
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: 16 } },
-                h('div', { style: { width: 56, height: 56, borderRadius: 16, background: `linear-gradient(135deg, ${COLORS.secondary}, #ff8c42)`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28 } }, '🔄'),
-                h('div', null,
-                    h('h2', { style: { margin: 0, fontSize: 24, fontWeight: 700, color: COLORS.text } }, 'Progi', h('span', { style: { color: COLORS.secondary } }, 'Lift'), ' Sync'),
-                    h('p', { style: { margin: 0, fontSize: 14, color: COLORS.textSecondary } }, 'Dashboard de synchronisation v3.0')
-                )
+        h('div', { style: { textAlign: 'center', marginBottom: 30 } },
+            h('h2', { style: { fontSize: '1.8rem', marginBottom: 5 } }, '🔄 Progilift Sync Dashboard'),
+            h('p', { style: { color: '#888', fontSize: '0.9rem' } }, 'Synchronisation des données vers Supabase')
+        ),
+        
+        // Configuration
+        h('div', { style: { ...cardStyle, marginBottom: 20 } },
+            h('h3', { style: { marginBottom: 15, color: '#4fc3f7' } }, '⚙️ Configuration API'),
+            h('div', { style: { display: 'flex', gap: 15, flexWrap: 'wrap' } },
+                h('input', { type: 'text', value: apiUrl, onChange: e => setApiUrl(e.target.value), placeholder: 'URL API (ex: https://xxx.vercel.app/api/sync)', style: inputStyle }),
+                h('button', { onClick: saveConfig, style: btnPrimary }, '💾 Sauvegarder'),
+                h('button', { onClick: testConnection, style: btnSecondary }, '🔌 Tester')
+            )
+        ),
+        
+        // Full Sync Panel
+        h('div', { style: { background: 'linear-gradient(135deg, rgba(79, 195, 247, 0.1), rgba(102, 187, 106, 0.1))', border: '1px solid rgba(79, 195, 247, 0.3)', borderRadius: 12, padding: 20, marginBottom: 20 } },
+            h('h3', { style: { color: '#4fc3f7', marginBottom: 15 } }, '🚀 Synchronisation Complète'),
+            h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 15 } },
+                h('span', { style: getStepBadgeStyle(stepStatus['0']) }, '0. Types Planning'),
+                h('span', { style: getStepBadgeStyle(stepStatus['1']) }, '1. Arrêts'),
+                h('span', { style: getStepBadgeStyle(stepStatus['2']) }, '2. Équipements (22)'),
+                h('span', { style: getStepBadgeStyle(stepStatus['2b']) }, '2b. Passages (22)'),
+                h('span', { style: getStepBadgeStyle(stepStatus['3']) }, '3. Pannes (7)'),
+                h('span', { style: getStepBadgeStyle(stepStatus['4']) }, '4. Nb Visites')
             ),
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderRadius: 20, background: `${connectionColors[connectionStatus]}15` } },
-                h('div', { style: { width: 10, height: 10, borderRadius: '50%', background: connectionColors[connectionStatus], animation: connectionStatus === 'testing' ? 'pulse 1.5s infinite' : 'none' } }),
-                h('span', { style: { fontSize: 13, fontWeight: 500, color: connectionColors[connectionStatus] } }, connectionLabels[connectionStatus])
+            h('div', { style: { display: 'flex', gap: 10 } },
+                h('button', { onClick: startFullSync, disabled: isRunning, style: { ...btnPrimary, opacity: isRunning ? 0.5 : 1, animation: isRunning ? 'pulse 1s infinite' : 'none' } }, '▶️ Lancer Sync Complète'),
+                h('button', { onClick: stopSync, disabled: !isRunning, style: { ...btnWarning, opacity: !isRunning ? 0.5 : 1 } }, '⏹️ Arrêter')
             )
         ),
         
-        // Configuration API
-        h('div', { style: cardStyle },
-            h('div', { style: cardTitleStyle }, h('span', null, '⚙️'), 'Configuration API'),
-            h('div', { style: { display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 } },
-                h('div', { style: { flex: 1, minWidth: 300 } },
-                    h('label', { style: { display: 'block', fontSize: 12, color: COLORS.textSecondary, marginBottom: 6 } }, 'URL de l\'API Vercel'),
-                    h('input', { 
-                        type: 'text', 
-                        value: apiUrl, 
-                        onChange: e => setApiUrl(e.target.value), 
-                        placeholder: 'https://votre-projet.vercel.app', 
-                        style: inputStyle 
-                    })
-                ),
-                h('div', { style: { display: 'flex', alignItems: 'flex-end', gap: 8 } },
-                    h('button', { onClick: testConnection, style: btnOutlineStyle }, '🔌 Tester'),
-                    h('button', { onClick: saveConfig, style: btnStyle(COLORS.info) }, h('span', null, '💾'), 'Sauvegarder')
-                )
-            )
-        ),
-        
-        // Stats en haut
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 20 } },
-            h('div', { style: { ...cardStyle, marginBottom: 0, padding: 16, textAlign: 'center' } },
-                h('div', { style: { fontSize: 28, fontWeight: 700, color: COLORS.secondary, fontFamily: 'Monaco, Consolas, monospace' } }, `${completedSteps}/6`),
-                h('div', { style: { fontSize: 11, color: COLORS.textSecondary, marginTop: 4 } }, 'Étapes')
+        // Progress
+        progress.visible && h('div', { style: { ...cardStyle, marginBottom: 20 } },
+            h('h3', { style: { marginBottom: 15, display: 'flex', alignItems: 'center', gap: 10 } },
+                h('span', { style: { display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: '#ffa726', animation: 'pulse 1s infinite' } }),
+                'Progression'
             ),
-            statsConfig.slice(0, 4).map(({ key, label, color, icon }) =>
-                h('div', { key, style: { ...cardStyle, marginBottom: 0, padding: 16, textAlign: 'center' } },
-                    h('div', { style: { fontSize: 28, fontWeight: 700, color, fontFamily: 'Monaco, Consolas, monospace' } }, stats[key].toLocaleString()),
-                    h('div', { style: { fontSize: 11, color: COLORS.textSecondary, marginTop: 4 } }, label)
-                )
-            )
-        ),
-        
-        // Actions globales
-        h('div', { style: { display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' } },
-            h('button', { 
-                onClick: startFullSync, 
-                disabled: isRunning, 
-                style: { ...btnStyle(`linear-gradient(135deg, ${COLORS.secondary}, #ff8c42)`, isRunning), padding: '14px 24px' } 
-            }, h('span', null, '🚀'), 'Synchronisation complète'),
-            h('button', { 
-                onClick: startCron, 
-                disabled: isRunning, 
-                style: btnStyle(COLORS.info, isRunning) 
-            }, h('span', null, '⚡'), 'Sync rapide (CRON)'),
-            h('button', { 
-                onClick: resetAllSteps, 
-                style: btnOutlineStyle 
-            }, '🔄 Réinitialiser'),
-            isRunning && h('button', { 
-                onClick: stopSync, 
-                style: btnStyle(COLORS.danger) 
-            }, h('span', null, '⏹️'), 'Arrêter')
-        ),
-        
-        // Grille des 6 étapes
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, marginBottom: 20 } },
-            steps.map(step => {
-                const status = stepStatus[step.id];
-                const isActive = status === 'running';
-                const isDone = status === 'success';
-                const isError = status === 'error';
-                const result = stepResults[step.id];
-                
-                const stepCardStyle = {
-                    ...cardStyle,
-                    marginBottom: 0,
-                    borderColor: isActive ? COLORS.info : isDone ? COLORS.success : isError ? COLORS.danger : COLORS.border,
-                    transition: 'all 0.2s',
-                    transform: isActive ? 'translateY(-2px)' : 'none'
-                };
-                
-                return h('div', { key: step.id, style: stepCardStyle },
-                    // Header de l'étape
-                    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 } },
-                        h('div', { 
-                            style: { 
-                                width: 32, height: 32, borderRadius: 8, 
-                                background: isActive ? COLORS.info : isDone ? COLORS.success : isError ? COLORS.danger : COLORS.background,
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                fontFamily: 'Monaco, Consolas, monospace', fontWeight: 600, fontSize: 14,
-                                color: (isActive || isDone || isError) ? 'white' : COLORS.secondary
-                            } 
-                        }, step.num),
-                        h('span', { 
-                            style: { 
-                                padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, textTransform: 'uppercase',
-                                background: `${stepStatusColors[status]}20`, color: stepStatusColors[status],
-                                animation: isActive ? 'pulse 1.5s infinite' : 'none'
-                            } 
-                        }, stepStatusLabels[status])
-                    ),
-                    
-                    // Titre et description
-                    h('div', { style: { fontSize: 16, fontWeight: 600, marginBottom: 6, color: COLORS.text } }, step.title),
-                    h('div', { style: { fontSize: 13, color: COLORS.textSecondary, marginBottom: 16, lineHeight: 1.5 } }, step.desc),
-                    
-                    // Paramètres si applicable
-                    step.hasParams && h('div', { style: { marginBottom: 16 } },
-                        step.paramType === 'sector' && h('select', {
-                            value: selectedSector,
-                            onChange: e => setSelectedSector(e.target.value),
-                            style: selectStyle
-                        },
-                            h('option', { value: 'all' }, 'Tous les secteurs'),
-                            Array.from({ length: TOTAL_SECTORS }, (_, i) => h('option', { key: i, value: i.toString() }, `Secteur ${i}`))
-                        ),
-                        step.paramType === 'period-pannes' && h('select', {
-                            value: selectedPeriodPannes,
-                            onChange: e => setSelectedPeriodPannes(e.target.value),
-                            style: selectStyle
-                        },
-                            h('option', { value: 'all' }, 'Toutes les périodes'),
-                            h('option', { value: '0' }, 'Période 0 (récent)'),
-                            h('option', { value: '1' }, 'Période 1 (ancien)')
-                        ),
-                        step.paramType === 'period-devis' && h('select', {
-                            value: selectedPeriodDevis,
-                            onChange: e => setSelectedPeriodDevis(e.target.value),
-                            style: selectStyle
-                        },
-                            h('option', { value: 'all' }, 'Toutes les périodes'),
-                            h('option', { value: '0' }, 'Période 0'),
-                            h('option', { value: '1' }, 'Période 1'),
-                            h('option', { value: '2' }, 'Période 2'),
-                            h('option', { value: '3' }, 'Période 3')
-                        )
-                    ),
-                    
-                    // Bouton exécuter
-                    h('button', { 
-                        onClick: () => runStep(step.id), 
-                        disabled: isRunning,
-                        style: stepBtnStyle(isRunning)
-                    }, '▶️ Exécuter'),
-                    
-                    // Résultat si disponible
-                    result && h('div', { 
-                        style: { 
-                            marginTop: 12, padding: 12, background: COLORS.background, borderRadius: 8,
-                            fontFamily: 'Monaco, Consolas, monospace', fontSize: 11, color: COLORS.textSecondary,
-                            maxHeight: 100, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all'
-                        } 
-                    }, JSON.stringify(result, null, 2))
-                );
-            })
-        ),
-        
-        // Barre de progression globale
-        h('div', { style: cardStyle },
-            h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 10, fontSize: 14, color: COLORS.textSecondary } },
-                h('span', null, progress.text),
-                h('span', null, progress.percent + '%')
+            h('div', { style: { background: 'rgba(0,0,0,0.3)', borderRadius: 10, height: 20, overflow: 'hidden', marginBottom: 10 } },
+                h('div', { style: { height: '100%', width: `${progress.percent}%`, background: 'linear-gradient(90deg, #4fc3f7, #66bb6a)', borderRadius: 10, transition: 'width 0.3s', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 600, color: '#1a1a2e' } }, `${Math.round(progress.percent)}%`)
             ),
-            h('div', { style: { height: 20, background: COLORS.background, borderRadius: 10, overflow: 'hidden' } },
-                h('div', { 
-                    style: { 
-                        height: '100%', width: `${progress.percent}%`, 
-                        background: `linear-gradient(90deg, ${COLORS.secondary}, #ffcc00)`, 
-                        borderRadius: 10, transition: 'width 0.3s',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 11, fontWeight: 700, color: 'white', minWidth: progress.percent > 8 ? 40 : 0
-                    } 
-                }, progress.percent > 8 ? progress.percent + '%' : '')
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#888' } },
+                h('span', null, progress.step),
+                h('span', null, progress.stats)
             )
         ),
         
-        // Stats détaillées
-        h('div', { style: cardStyle },
-            h('div', { style: cardHeaderStyle },
-                h('div', { style: cardTitleStyle }, h('span', null, '📊'), 'Statistiques détaillées'),
-                h('span', { style: { fontSize: 12, color: COLORS.textSecondary } }, 'Dernière sync: ' + new Date().toLocaleTimeString('fr-FR'))
-            ),
-            h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: 12 } },
-                statsConfig.map(({ key, label, color, icon }) =>
-                    h('div', { key, style: { background: COLORS.background, borderRadius: 10, padding: 16, textAlign: 'center', borderLeft: `3px solid ${color}` } },
-                        h('div', { style: { fontSize: 11, marginBottom: 4 } }, icon),
-                        h('div', { style: { fontSize: 24, fontWeight: 700, color, fontFamily: 'Monaco, Consolas, monospace' } }, stats[key].toLocaleString()),
-                        h('div', { style: { fontSize: 10, color: COLORS.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 } }, label)
-                    )
-                )
-            )
+        // Quick Actions
+        h('div', { style: { display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' } },
+            h('button', { onClick: () => runStep('mode=cron'), style: btnSecondary }, '⚡ Sync Rapide (Cron)'),
+            h('button', { onClick: () => runStep('step=0'), style: btnSecondary }, '📋 Types Planning'),
+            h('button', { onClick: () => runStep('step=1'), style: btnSecondary }, '🛑 Arrêts'),
+            h('button', { onClick: () => runStep('step=4'), style: btnSecondary }, '🔢 Update Nb Visites')
         ),
         
-        // Grid: Logs + History
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: 20 } },
-            // Journal d'exécution
+        // Sync Cards Grid
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 15, marginBottom: 20 } },
+            // Step 0: Types Planning
             h('div', { style: cardStyle },
-                h('div', { style: cardHeaderStyle },
-                    h('div', { style: cardTitleStyle }, h('span', null, '📋'), 'Journal d\'exécution'),
-                    h('button', { onClick: clearLogs, style: btnOutlineStyle }, 'Effacer')
+                h('h4', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, fontSize: '1.1rem' } }, h('span', null, '📋'), 'Types Planning'),
+                h('p', { style: { color: '#888', fontSize: '0.85rem', marginBottom: 15 } }, 'Table de référence TYPEPLANNING → nb_visites'),
+                h('div', { style: { display: 'flex', gap: 15, marginBottom: 15, flexWrap: 'wrap' } },
+                    h('span', { style: { background: 'rgba(0,0,0,0.2)', padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem' } }, 'Step: ', h('strong', { style: { color: '#4fc3f7' } }, '0')),
+                    h('span', { style: { background: 'rgba(0,0,0,0.2)', padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem' } }, 'Table: ', h('strong', { style: { color: '#4fc3f7' } }, 'type_planning'))
                 ),
-                h('div', { 
-                    ref: logsEndRef, 
-                    style: { 
-                        background: '#0d1117', borderRadius: 10, padding: 16, 
-                        maxHeight: 350, overflowY: 'auto', 
-                        fontFamily: 'Monaco, Consolas, monospace', fontSize: 12, lineHeight: 1.8 
-                    } 
-                },
-                    logs.length === 0 ?
-                        h('div', { style: { textAlign: 'center', padding: 40, color: '#6e7681' } }, 
-                            h('div', { style: { fontSize: 36, marginBottom: 12 } }, '📋'),
-                            h('p', null, 'En attente de configuration...')
-                        ) :
-                        logs.map((log, idx) => h('div', { 
-                            key: idx, 
-                            style: { 
-                                padding: '4px 0', 
-                                borderBottom: idx < logs.length - 1 ? '1px solid #21262d' : 'none',
-                                display: 'flex', gap: 12
-                            } 
-                        },
-                            h('span', { style: { color: '#484f58', flexShrink: 0 } }, log.time),
-                            h('span', { style: { color: logColors[log.type] || '#8b949e' } }, log.msg)
-                        ))
+                h('button', { onClick: () => runStep('step=0'), style: btnPrimary }, '▶️ Sync')
+            ),
+            
+            // Step 1: Arrêts
+            h('div', { style: cardStyle },
+                h('h4', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, fontSize: '1.1rem' } }, h('span', null, '🛑'), 'Arrêts en cours'),
+                h('p', { style: { color: '#888', fontSize: '0.85rem', marginBottom: 15 } }, 'Appareils actuellement à l\'arrêt'),
+                h('div', { style: { display: 'flex', gap: 15, marginBottom: 15, flexWrap: 'wrap' } },
+                    h('span', { style: { background: 'rgba(0,0,0,0.2)', padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem' } }, 'Step: ', h('strong', { style: { color: '#4fc3f7' } }, '1')),
+                    h('span', { style: { background: 'rgba(0,0,0,0.2)', padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem' } }, 'Table: ', h('strong', { style: { color: '#4fc3f7' } }, 'appareils_arret'))
+                ),
+                h('button', { onClick: () => runStep('step=1'), style: btnPrimary }, '▶️ Sync')
+            ),
+            
+            // Step 2: Équipements
+            h('div', { style: cardStyle },
+                h('h4', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, fontSize: '1.1rem' } }, h('span', null, '🏗️'), 'Équipements'),
+                h('p', { style: { color: '#888', fontSize: '0.85rem', marginBottom: 15 } }, 'Wsoucont - Données principales des appareils'),
+                h('div', { style: { display: 'flex', gap: 15, marginBottom: 15, flexWrap: 'wrap' } },
+                    h('span', { style: { background: 'rgba(0,0,0,0.2)', padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem' } }, 'Step: ', h('strong', { style: { color: '#4fc3f7' } }, '2')),
+                    h('span', { style: { background: 'rgba(0,0,0,0.2)', padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem' } }, 'Secteurs: ', h('strong', { style: { color: '#4fc3f7' } }, '22')),
+                    h('span', { style: { background: 'rgba(0,0,0,0.2)', padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem' } }, 'Table: ', h('strong', { style: { color: '#4fc3f7' } }, 'equipements'))
+                ),
+                h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' } },
+                    h('button', { onClick: () => runSequence('step=2', 'sector', 22), style: btnPrimary }, '▶️ Sync All'),
+                    h('select', { id: 'sector2Select', onChange: e => e.target.value && runStep(`step=2&sector=${e.target.value}`), style: selectStyle },
+                        h('option', { value: '' }, 'Secteur...')
+                    )
                 )
             ),
             
-            // Historique
+            // Step 2b: Passages
             h('div', { style: cardStyle },
-                h('div', { style: cardHeaderStyle },
-                    h('div', { style: cardTitleStyle }, h('span', null, '📅'), 'Historique'),
-                    h('button', { onClick: clearHistory, style: btnOutlineStyle }, 'Effacer')
+                h('h4', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, fontSize: '1.1rem' } }, h('span', null, '📅'), 'Passages'),
+                h('p', { style: { color: '#888', fontSize: '0.85rem', marginBottom: 15 } }, 'Wsoucont2 - Historique passages, DAT, TXT'),
+                h('div', { style: { display: 'flex', gap: 15, marginBottom: 15, flexWrap: 'wrap' } },
+                    h('span', { style: { background: 'rgba(0,0,0,0.2)', padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem' } }, 'Step: ', h('strong', { style: { color: '#4fc3f7' } }, '2b')),
+                    h('span', { style: { background: 'rgba(0,0,0,0.2)', padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem' } }, 'Secteurs: ', h('strong', { style: { color: '#4fc3f7' } }, '22'))
                 ),
-                h('div', { style: { maxHeight: 350, overflowY: 'auto' } },
-                    history.length === 0 ?
-                        h('div', { style: { textAlign: 'center', padding: 40, color: COLORS.textSecondary } }, 
-                            h('div', { style: { fontSize: 36, marginBottom: 12 } }, '📅'),
-                            h('p', null, 'Aucun historique')
-                        ) :
-                        h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-                            h('thead', null,
-                                h('tr', null,
-                                    ['Date', 'Status', 'Durée', 'Détails'].map((th, i) => 
-                                        h('th', { key: i, style: { padding: 12, textAlign: 'left', borderBottom: `1px solid ${COLORS.border}`, color: COLORS.textSecondary, fontSize: 11, textTransform: 'uppercase' } }, th)
-                                    )
-                                )
-                            ),
-                            h('tbody', null,
-                                history.slice(0, 15).map((entry, idx) => {
-                                    const statusColors = { success: COLORS.success, cron: COLORS.info, error: COLORS.danger };
-                                    const statusLabels = { success: 'Succès', cron: 'CRON', error: 'Erreur' };
-                                    const details = entry.stats ? 
-                                        `${entry.stats.arrets || 0} arr, ${entry.stats.equipements || 0} éq, ${entry.stats.pannes || 0} pan` : 
-                                        (entry.error ? entry.error.substring(0, 20) + '...' : '-');
-                                    return h('tr', { key: idx },
-                                        h('td', { style: { padding: 10, fontSize: 12, borderBottom: `1px solid ${COLORS.border}` } }, 
-                                            new Date(entry.date).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-                                        ),
-                                        h('td', { style: { padding: 10, borderBottom: `1px solid ${COLORS.border}` } },
-                                            h('span', { style: { padding: '4px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: `${statusColors[entry.status]}25`, color: statusColors[entry.status] } }, 
-                                                statusLabels[entry.status] || entry.status
-                                            )
-                                        ),
-                                        h('td', { style: { padding: 10, fontSize: 12, borderBottom: `1px solid ${COLORS.border}` } }, entry.duration ? `${entry.duration}s` : '-'),
-                                        h('td', { style: { padding: 10, fontSize: 11, borderBottom: `1px solid ${COLORS.border}`, color: COLORS.textSecondary } }, details)
-                                    );
-                                })
-                            )
-                        )
+                h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' } },
+                    h('button', { onClick: () => runSequence('step=2b', 'sector', 22), style: btnPrimary }, '▶️ Sync All'),
+                    h('select', { id: 'sector2bSelect', onChange: e => e.target.value && runStep(`step=2b&sector=${e.target.value}`), style: selectStyle },
+                        h('option', { value: '' }, 'Secteur...')
+                    )
                 )
+            ),
+            
+            // Step 3: Pannes
+            h('div', { style: cardStyle },
+                h('h4', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, fontSize: '1.1rem' } }, h('span', null, '🔧'), 'Pannes'),
+                h('p', { style: { color: '#888', fontSize: '0.85rem', marginBottom: 15 } }, 'Historique des pannes par période'),
+                h('div', { style: { display: 'flex', gap: 15, marginBottom: 15, flexWrap: 'wrap' } },
+                    h('span', { style: { background: 'rgba(0,0,0,0.2)', padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem' } }, 'Step: ', h('strong', { style: { color: '#4fc3f7' } }, '3')),
+                    h('span', { style: { background: 'rgba(0,0,0,0.2)', padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem' } }, 'Périodes: ', h('strong', { style: { color: '#4fc3f7' } }, '7')),
+                    h('span', { style: { background: 'rgba(0,0,0,0.2)', padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem' } }, 'Table: ', h('strong', { style: { color: '#4fc3f7' } }, 'pannes'))
+                ),
+                h('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' } },
+                    h('button', { onClick: () => runSequence('step=3', 'period', 7), style: btnPrimary }, '▶️ Sync All'),
+                    h('select', { id: 'period3Select', onChange: e => e.target.value && runStep(`step=3&period=${e.target.value}`), style: selectStyle },
+                        h('option', { value: '' }, 'Période...')
+                    )
+                )
+            ),
+            
+            // Step 4: Nb Visites
+            h('div', { style: cardStyle },
+                h('h4', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, fontSize: '1.1rem' } }, h('span', null, '🔢'), 'Nb Visites/An'),
+                h('p', { style: { color: '#888', fontSize: '0.85rem', marginBottom: 15 } }, 'Mise à jour nb_visites_an via type_planning'),
+                h('div', { style: { display: 'flex', gap: 15, marginBottom: 15, flexWrap: 'wrap' } },
+                    h('span', { style: { background: 'rgba(0,0,0,0.2)', padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem' } }, 'Step: ', h('strong', { style: { color: '#4fc3f7' } }, '4')),
+                    h('span', { style: { background: 'rgba(0,0,0,0.2)', padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem' } }, 'Jointure: ', h('strong', { style: { color: '#4fc3f7' } }, 'typeplanning → nb_visites'))
+                ),
+                h('button', { onClick: () => runStep('step=4'), style: btnPrimary }, '▶️ Update')
             )
         ),
         
-        // Footer
-        h('div', { style: { textAlign: 'center', padding: 20, color: COLORS.textSecondary, fontSize: 12, marginTop: 10 } }, 
-            'Progilift Sync Dashboard v3.0 • Auvergne Ascenseurs'
+        // Logs
+        h('div', { style: { background: 'rgba(0,0,0,0.3)', borderRadius: 12, padding: 20, maxHeight: 400, overflowY: 'auto' }, ref: logsEndRef },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 } },
+                h('h3', null, '📜 Journal'),
+                h('button', { onClick: clearLogs, style: { ...btnSecondary, padding: '5px 10px', fontSize: '0.75rem' } }, '🗑️ Effacer')
+            ),
+            logs.map((log, i) => h('div', { 
+                key: i, 
+                style: { padding: '8px 12px', marginBottom: 5, borderRadius: 6, fontSize: '0.85rem', fontFamily: 'Monaco, Consolas, monospace', display: 'flex', gap: 10, background: logColors[log.type], color: logTextColors[log.type] }
+            },
+                h('span', { style: { color: '#666', minWidth: 80 } }, log.time),
+                h('span', null, log.msg)
+            ))
         ),
         
         // CSS Animation
