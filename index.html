@@ -19162,15 +19162,16 @@ const PlanningPage = ({ data, user, refresh, showToast }) => {
 };
 
 
+
 // ==========================================
-// PARC ASCENSEURS PAGE - Version 2.0 avec fonctionnalités ElevatorPark complètes
+// PARC ASCENSEURS PAGE - Version 3.0 (ElevatorPark complet)
 // ==========================================
 const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
     // Navigation par onglets
-    const [activeTab, setActiveTab] = useState('dashboard'); // dashboard, equipements, arrets, pannes, devis, clients
+    const [activeTab, setActiveTab] = useState('dashboard');
     
     // États généraux
-    const [viewMode, setViewMode] = useState('table'); // 'table', 'cards'
+    const [viewMode, setViewMode] = useState('table');
     const [search, setSearch] = useState('');
     const [loading, setLoading] = useState(true);
     const [lastSync, setLastSync] = useState(null);
@@ -19178,13 +19179,18 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
     // Panneau de détail
     const [detailPanel, setDetailPanel] = useState({ open: false, type: null, data: null });
     
-    // Données chargées
+    // Données brutes
     const [equipements, setEquipements] = useState([]);
     const [arrets, setArrets] = useState([]);
     const [pannes, setPannes] = useState([]);
     const [devis, setDevis] = useState([]);
     const [clients, setClients] = useState([]);
     const [contrats, setContrats] = useState([]);
+    
+    // Données enrichies
+    const [arretsProcessed, setArretsProcessed] = useState([]);
+    const [pannesProcessed, setPannesProcessed] = useState([]);
+    const [devisProcessed, setDevisProcessed] = useState([]);
     
     // Filtres
     const [filters, setFilters] = useState({
@@ -19197,7 +19203,7 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
     const PAGE_SIZE = 25;
     
     // Tri
-    const [sortConfig, setSortConfig] = useState({ column: 'code', direction: 'asc' });
+    const [sortConfig, setSortConfig] = useState({ column: 'ascenseur', direction: 'asc' });
     
     // Onglet Clients/Contrats
     const [clientsContratsTab, setClientsContratsTab] = useState('clients');
@@ -19208,7 +19214,21 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
         enService: 0, horsContrat: 0, secteurs: []
     });
     
+    // Secteurs autorisés pour l'utilisateur (tous les rôles)
+    const userSectors = useMemo(() => {
+        try {
+            const sectors = user?.sectors ? (typeof user.sectors === 'string' ? JSON.parse(user.sectors) : user.sectors) : [];
+            return sectors.length > 0 ? sectors : null;
+        } catch (e) { return null; }
+    }, [user]);
+    
     // Maps pour les jointures rapides
+    const equipMap = useMemo(() => {
+        const map = {};
+        equipements.forEach(eq => { map[eq.id_wsoucont] = eq; });
+        return map;
+    }, [equipements]);
+    
     const contratsMap = useMemo(() => {
         const map = {};
         contrats.forEach(c => { map[c.id_wcontrat] = c; });
@@ -19221,14 +19241,8 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
         return map;
     }, [clients]);
     
-    // Secteurs autorisés pour l'utilisateur
-    const userSectors = useMemo(() => {
-        try {
-            if (user?.role === 'admin') return null; // Admin = tous les secteurs
-            const sectors = user?.sectors ? (typeof user.sectors === 'string' ? JSON.parse(user.sectors) : user.sectors) : [];
-            return sectors.length > 0 ? sectors : null; // null = pas de restriction
-        } catch (e) { return null; }
-    }, [user]);
+    // IDs des équipements à l'arrêt
+    const arretIds = useMemo(() => new Set(arrets.map(a => a.id_wsoucont)), [arrets]);
     
     // Filtrer les équipements par secteurs utilisateur
     const filteredByUserSectors = useMemo(() => {
@@ -19236,49 +19250,35 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
         return equipements.filter(eq => !eq.secteur || userSectors.includes(eq.secteur));
     }, [equipements, userSectors]);
     
-    // Charger toutes les données au montage
-    useEffect(() => {
-        loadAllData();
-    }, []);
+    // Charger toutes les données
+    useEffect(() => { loadAllData(); }, []);
     
     const loadAllData = async () => {
         setLoading(true);
         try {
-            // Charger équipements (table: equipements)
+            // Charger équipements
             let eqData = [];
-            try {
-                eqData = await fetchAllRows(db, 'equipements', '*', 'ascenseur');
-            } catch { eqData = []; }
+            try { eqData = await fetchAllRows(db, 'equipements', '*', 'ascenseur'); } catch { eqData = []; }
             
-            // Charger arrêts (table: appareils_arret)
+            // Charger arrêts
             let arrData = [];
-            try {
-                arrData = await fetchAllRows(db, 'appareils_arret', '*', 'date_appel');
-            } catch { arrData = []; }
+            try { arrData = await fetchAllRows(db, 'appareils_arret', '*', 'date_appel'); } catch { arrData = []; }
             
-            // Charger pannes (table: pannes)
+            // Charger pannes
             let panData = [];
-            try {
-                panData = await fetchAllRows(db, 'pannes', '*');
-            } catch { panData = []; }
+            try { panData = await fetchAllRows(db, 'pannes', '*'); } catch { panData = []; }
             
-            // Charger devis (table: devis)
+            // Charger devis
             let devData = [];
-            try {
-                devData = await fetchAllRows(db, 'devis', '*');
-            } catch { devData = []; }
+            try { devData = await fetchAllRows(db, 'devis', '*'); } catch { devData = []; }
             
-            // Charger clients (table: clients)
+            // Charger clients
             let cliData = [];
-            try {
-                cliData = await fetchAllRows(db, 'clients', '*');
-            } catch { cliData = []; }
+            try { cliData = await fetchAllRows(db, 'clients', '*'); } catch { cliData = []; }
             
-            // Charger contrats (table: contrats)
+            // Charger contrats
             let conData = [];
-            try {
-                conData = await fetchAllRows(db, 'contrats', '*');
-            } catch { conData = []; }
+            try { conData = await fetchAllRows(db, 'contrats', '*'); } catch { conData = []; }
             
             setEquipements(eqData);
             setArrets(arrData);
@@ -19287,8 +19287,61 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
             setClients(cliData);
             setContrats(conData);
             
+            // Créer le map des équipements pour enrichissement
+            const eqMap = {};
+            eqData.forEach(eq => { eqMap[eq.id_wsoucont] = eq; });
+            
+            // Enrichir les arrêts avec les données équipement
+            const enrichedArrets = arrData.map(a => {
+                const equip = eqMap[a.id_wsoucont];
+                return {
+                    ...a,
+                    _ascenseur: a.ascenseur || (equip ? equip.ascenseur : null) || `#${a.id_wsoucont}`,
+                    _adresse: a.adresse || (equip ? equip.adresse : ''),
+                    _ville: a.ville || (equip ? equip.ville : ''),
+                    _secteur: a.secteur || (equip ? equip.secteur : ''),
+                    _equip: equip
+                };
+            });
+            setArretsProcessed(enrichedArrets);
+            
+            // Enrichir les pannes avec les données équipement
+            const enrichedPannes = panData.map(p => {
+                const equip = eqMap[p.id_wsoucont];
+                return {
+                    ...p,
+                    _ascenseur: equip ? equip.ascenseur : `#${p.id_wsoucont}`,
+                    _adresse: equip ? equip.adresse : '',
+                    _ville: equip ? equip.ville : '',
+                    _secteur: equip ? equip.secteur : '',
+                    _equip: equip
+                };
+            });
+            setPannesProcessed(enrichedPannes);
+            
+            // Enrichir les devis avec les données équipement et date acceptation
+            const enrichedDevis = devData.map(d => {
+                const equip = eqMap[d.id_wsoucont];
+                let dateAcceptation = null;
+                if (d.data) {
+                    try {
+                        const jsonData = typeof d.data === 'string' ? JSON.parse(d.data) : d.data;
+                        if (jsonData.Date_Acceptation) dateAcceptation = String(jsonData.Date_Acceptation);
+                    } catch (e) {}
+                }
+                return {
+                    ...d,
+                    _ascenseur: equip ? equip.ascenseur : (d.id_wsoucont ? `#${d.id_wsoucont}` : '-'),
+                    _ville: equip ? equip.ville : '',
+                    _secteur: equip ? equip.secteur : '',
+                    _equip: equip,
+                    _date_acceptation: dateAcceptation
+                };
+            });
+            setDevisProcessed(enrichedDevis);
+            
             // Calculer les stats
-            const arretIds = new Set(arrData.map(a => a.id_wsoucont));
+            const arretIdsSet = new Set(arrData.map(a => a.id_wsoucont));
             const secteurs = [...new Set(eqData.map(e => e.secteur).filter(Boolean))].sort();
             
             setStats({
@@ -19298,7 +19351,7 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
                 devis: devData.length,
                 clients: cliData.length,
                 contrats: conData.length,
-                enService: eqData.filter(e => !arretIds.has(e.id_wsoucont)).length,
+                enService: eqData.filter(e => !arretIdsSet.has(e.id_wsoucont)).length,
                 horsContrat: eqData.filter(e => !e.id_wcontrat).length,
                 secteurs
             });
@@ -19313,117 +19366,13 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
         setLoading(false);
     };
     
-    // Filtrer les données selon l'onglet actif
-    const getFilteredData = (type, dataArray) => {
-        return dataArray.filter(item => {
-            // Recherche globale
-            if (search) {
-                const term = search.toLowerCase();
-                const searchFields = Object.values(item).map(v => String(v || '').toLowerCase());
-                if (!searchFields.some(f => f.includes(term))) return false;
-            }
-            
-            // Filtres spécifiques
-            if (filters.secteur && item.secteur !== filters.secteur) return false;
-            if (filters.ville && item.ville !== filters.ville) return false;
-            if (filters.marque && item.div1 !== filters.marque) return false;
-            
-            return true;
-        });
-    };
-    
-    // Trier les données
-    const getSortedData = (dataArray) => {
-        return [...dataArray].sort((a, b) => {
-            const aVal = a[sortConfig.column] || '';
-            const bVal = b[sortConfig.column] || '';
-            const cmp = String(aVal).localeCompare(String(bVal), 'fr', { numeric: true });
-            return sortConfig.direction === 'asc' ? cmp : -cmp;
-        });
-    };
-    
-    // Pagination
-    const getPaginatedData = (dataArray, type) => {
-        const page = currentPage[type] || 1;
-        const start = (page - 1) * PAGE_SIZE;
-        return dataArray.slice(start, start + PAGE_SIZE);
-    };
-    
-    // Changer le tri
-    const handleSort = (column) => {
-        setSortConfig(prev => ({
-            column,
-            direction: prev.column === column && prev.direction === 'asc' ? 'desc' : 'asc'
-        }));
-    };
-    
-    // Formater les dates
-    const formatDateFR = (dateStr) => {
-        if (!dateStr) return '-';
-        const str = String(dateStr).trim();
-        if (/^\d{8}$/.test(str)) return `${str.slice(6,8)}/${str.slice(4,6)}/${str.slice(0,4)}`;
-        if (str.includes('-')) {
-            const parts = str.split('T')[0].split('-');
-            if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
-        }
-        try {
-            const d = new Date(str);
-            if (!isNaN(d.getTime())) return d.toLocaleDateString('fr-FR');
-        } catch {}
-        return str;
-    };
-    
-    // Formater les montants
-    const formatMontant = (m) => parseFloat(m || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    
-    // Tronquer texte
-    const truncate = (str, len) => str && str.length > len ? str.slice(0, len) + '...' : str || '-';
-    
-    // Statut devis
-    const getDevisStatut = (code) => {
-        const statuts = { 0: { label: 'Refusé', color: COLORS.danger }, 2: { label: 'Accepté', color: COLORS.success }, 
-                         3: { label: 'Abandonné', color: COLORS.muted }, 5: { label: 'Commandé', color: COLORS.info }, 
-                         7: { label: 'Facturé', color: COLORS.purple } };
-        return statuts[code] || { label: 'En cours', color: COLORS.warning };
-    };
-    
-    // Couleurs secteurs
-    const getSecteurColor = (s) => {
-        const colors = { 'T1': '#3B82F6', 'T2': '#10B981', 'T3': '#F59E0B', 'T4': '#EF4444', 'T5': '#8B5CF6', 'T6': '#EC4899' };
-        return colors[s] || '#6B7280';
-    };
-    
-    // Ouvrir panneau de détail
-    const openDetail = (type, item) => setDetailPanel({ open: true, type, data: item });
-    const closeDetail = () => setDetailPanel({ open: false, type: null, data: null });
-    
-    // Obtenir client d'un équipement
-    const getEquipementClient = (eq) => {
-        const contratId = eq.id_wcontrat;
-        if (!contratId) return null;
-        const contrat = contratsMap[contratId];
-        if (!contrat) return null;
-        return clientsMap[contrat.id_wclient] || null;
-    };
-    
-    // Obtenir contrat d'un équipement
-    const getEquipementContrat = (eq) => contratsMap[eq.id_wcontrat] || null;
-    
-    // Options filtres basées sur les équipements filtrés par secteurs utilisateur
-    const filterOptions = useMemo(() => ({
-        secteurs: userSectors || [...new Set(filteredByUserSectors.map(e => e.secteur).filter(Boolean))].sort(),
-        villes: [...new Set(filteredByUserSectors.map(e => e.ville).filter(Boolean))].sort(),
-        marques: [...new Set(filteredByUserSectors.map(e => e.div1).filter(Boolean))].sort(),
-        techniciens: [...new Set(pannes.map(p => p.technicien).filter(Boolean))].sort()
-    }), [filteredByUserSectors, pannes, userSectors]);
-    
-    // Stats recalculées selon les équipements filtrés par secteurs utilisateur
+    // Stats filtrées par secteurs utilisateur
     const filteredStats = useMemo(() => {
         const eqIds = new Set(filteredByUserSectors.map(e => e.id_wsoucont));
-        const filteredArrets = arrets.filter(a => eqIds.has(a.id_wsoucont));
-        const filteredPannes = pannes.filter(p => eqIds.has(p.id_wsoucont));
-        const filteredDevis = devis.filter(d => eqIds.has(d.id_wsoucont));
-        const arretIds = new Set(filteredArrets.map(a => a.id_wsoucont));
+        const filteredArrets = arretsProcessed.filter(a => eqIds.has(a.id_wsoucont));
+        const filteredPannes = pannesProcessed.filter(p => eqIds.has(p.id_wsoucont));
+        const filteredDevis = devisProcessed.filter(d => eqIds.has(d.id_wsoucont));
+        const arretIdsFiltered = new Set(filteredArrets.map(a => a.id_wsoucont));
         
         return {
             equipements: filteredByUserSectors.length,
@@ -19432,13 +19381,148 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
             devis: filteredDevis.length,
             clients: stats.clients,
             contrats: stats.contrats,
-            enService: filteredByUserSectors.filter(e => !arretIds.has(e.id_wsoucont)).length,
+            enService: filteredByUserSectors.filter(e => !arretIdsFiltered.has(e.id_wsoucont)).length,
             horsContrat: filteredByUserSectors.filter(e => !e.id_wcontrat).length,
             secteurs: [...new Set(filteredByUserSectors.map(e => e.secteur).filter(Boolean))].sort()
         };
-    }, [filteredByUserSectors, arrets, pannes, devis, stats.clients, stats.contrats]);
+    }, [filteredByUserSectors, arretsProcessed, pannesProcessed, devisProcessed, stats.clients, stats.contrats]);
     
-    // ========== RENDER ONGLETS ==========
+    // Utilitaires
+    const formatDateFR = (d) => {
+        if (!d) return '-';
+        const s = String(d);
+        if (/^\d{8}$/.test(s)) return `${s.slice(6,8)}/${s.slice(4,6)}/${s.slice(0,4)}`;
+        if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(8,10) + '/' + s.slice(5,7) + '/' + s.slice(0,4);
+        try { return new Date(d).toLocaleDateString('fr-FR'); } catch { return '-'; }
+    };
+    
+    const formatHeureFR = (h) => {
+        if (!h) return '';
+        const s = String(h);
+        if (s.includes(':')) return s.slice(0, 5);
+        if (s.length >= 4) return s.slice(0, 2) + ':' + s.slice(2, 4);
+        return s;
+    };
+    
+    const formatMontant = (m) => {
+        if (!m && m !== 0) return '-';
+        return parseFloat(m).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+    
+    const truncate = (str, len) => str && str.length > len ? str.slice(0, len) + '...' : str || '-';
+    
+    const getDevisStatut = (code) => {
+        const c = String(code);
+        if (c === '7') return { label: 'Facturé', color: COLORS.purple, bg: COLORS.purplePastel };
+        if (c === '5') return { label: 'Commandé', color: COLORS.info, bg: COLORS.infoPastel };
+        if (c === '2') return { label: 'Accepté', color: COLORS.success, bg: COLORS.successPastel };
+        if (c === '3') return { label: 'Abandonné', color: COLORS.muted, bg: COLORS.background };
+        if (c === '0') return { label: 'Refusé', color: COLORS.danger, bg: COLORS.dangerPastel };
+        return { label: 'En attente', color: COLORS.warning, bg: COLORS.warningPastel };
+    };
+    
+    const getSecteurColor = (s) => {
+        const colors = { 'T1': '#3B82F6', 'T2': '#10B981', 'T3': '#F59E0B', 'T4': '#EF4444', 'T5': '#8B5CF6', 'T6': '#EC4899', 'T7': '#14B8A6', 'T8': '#6366F1' };
+        return colors[s] || '#6B7280';
+    };
+    
+    const openDetail = (type, item) => setDetailPanel({ open: true, type, data: item });
+    const closeDetail = () => setDetailPanel({ open: false, type: null, data: null });
+    
+    const getEquipementClient = (eq) => {
+        if (!eq.id_wcontrat) return null;
+        const contrat = contratsMap[eq.id_wcontrat];
+        if (!contrat) return null;
+        return clientsMap[contrat.id_wclient] || null;
+    };
+    
+    const getEquipementContrat = (eq) => contratsMap[eq.id_wcontrat] || null;
+    
+    // Options filtres basées sur les données
+    const filterOptions = useMemo(() => ({
+        secteurs: userSectors || [...new Set(filteredByUserSectors.map(e => e.secteur).filter(Boolean))].sort(),
+        villes: [...new Set(filteredByUserSectors.map(e => e.ville).filter(Boolean))].sort(),
+        marques: [...new Set(filteredByUserSectors.map(e => e.div1).filter(Boolean))].sort(),
+        techniciens: [...new Set(pannesProcessed.map(p => p.depanneur).filter(Boolean))].sort(),
+        villesArrets: [...new Set(arretsProcessed.map(a => a._ville).filter(Boolean))].sort(),
+        villesPannes: [...new Set(pannesProcessed.map(p => p._ville).filter(Boolean))].sort(),
+        villesDevis: [...new Set(devisProcessed.map(d => d._ville).filter(Boolean))].sort(),
+        secteursArrets: [...new Set(arretsProcessed.map(a => a._secteur).filter(Boolean))].sort(),
+        secteursPannes: [...new Set(pannesProcessed.map(p => p._secteur).filter(Boolean))].sort(),
+        secteursDevis: [...new Set(devisProcessed.map(d => d._secteur).filter(Boolean))].sort(),
+        villesClients: [...new Set(clients.map(c => c.ville).filter(Boolean))].sort(),
+        villesContrats: [...new Set(contrats.map(c => c.ville).filter(Boolean))].sort(),
+        secteursContrats: [...new Set(contrats.map(c => c.secteur).filter(Boolean))].sort()
+    }), [filteredByUserSectors, pannesProcessed, arretsProcessed, devisProcessed, clients, contrats, userSectors]);
+    
+    // Gestion du tri
+    const handleSort = (column) => {
+        setSortConfig(prev => ({
+            column,
+            direction: prev.column === column && prev.direction === 'asc' ? 'desc' : 'asc'
+        }));
+        setCurrentPage(p => ({ ...p, [activeTab]: 1 }));
+    };
+    
+    const getSortedData = (data, tab) => {
+        if (!sortConfig.column) return data;
+        return [...data].sort((a, b) => {
+            let valA, valB;
+            const col = sortConfig.column;
+            
+            if (col === 'ascenseur') { valA = a.ascenseur || a._ascenseur || ''; valB = b.ascenseur || b._ascenseur || ''; }
+            else if (col === 'contrat') { 
+                const cA = getEquipementContrat(a); const cB = getEquipementContrat(b);
+                valA = cA?.immeuble || ''; valB = cB?.immeuble || ''; 
+            }
+            else if (col === 'ville') { valA = a.ville || a._ville || ''; valB = b.ville || b._ville || ''; }
+            else if (col === 'marque') { valA = a.div1 || ''; valB = b.div1 || ''; }
+            else if (col === 'secteur') { valA = a.secteur || a._secteur || ''; valB = b.secteur || b._secteur || ''; }
+            else if (col === 'statut') { valA = arretIds.has(a.id_wsoucont) ? 1 : 0; valB = arretIds.has(b.id_wsoucont) ? 1 : 0; }
+            else if (col === 'date_panne' || col === 'date_appel') { valA = a.date_panne || a.date_appel || ''; valB = b.date_panne || b.date_appel || ''; }
+            else if (col === 'date_devis') { valA = a.date_devis || ''; valB = b.date_devis || ''; }
+            else if (col === 'date_acceptation') { valA = a._date_acceptation || ''; valB = b._date_acceptation || ''; }
+            else if (col === 'numero') { valA = a.numero || ''; valB = b.numero || ''; }
+            else if (col === 'client') { valA = a.client || ''; valB = b.client || ''; }
+            else if (col === 'montant') { valA = parseFloat(a.montant_ht) || 0; valB = parseFloat(b.montant_ht) || 0; }
+            else if (col === 'libelle') { valA = a.libelle || a.motif || ''; valB = b.libelle || b.motif || ''; }
+            else if (col === 'depanneur') { valA = a.depanneur || ''; valB = b.depanneur || ''; }
+            else if (col === 'duree') { valA = parseInt(a.duree) || 0; valB = parseInt(b.duree) || 0; }
+            else if (col === 'motif') { valA = a.motif || ''; valB = b.motif || ''; }
+            else if (col === 'demandeur') { valA = a.demandeur || ''; valB = b.demandeur || ''; }
+            else if (col === 'nom') { valA = a.nom || ''; valB = b.nom || ''; }
+            else if (col === 'cod') { valA = a.cod || ''; valB = b.cod || ''; }
+            else if (col === 'telephone') { valA = a.telephone || ''; valB = b.telephone || ''; }
+            else if (col === 'immeuble') { valA = a.immeuble || ''; valB = b.immeuble || ''; }
+            else if (col === 'contrats') { 
+                const countA = contrats.filter(ct => ct.id_wclient === a.id_wclient).length;
+                const countB = contrats.filter(ct => ct.id_wclient === b.id_wclient).length;
+                valA = countA; valB = countB;
+            }
+            else if (col === 'equipements') {
+                if (tab === 'clients') {
+                    valA = equipements.filter(e => { const c = getEquipementClient(e); return c && c.id_wclient === a.id_wclient; }).length;
+                    valB = equipements.filter(e => { const c = getEquipementClient(e); return c && c.id_wclient === b.id_wclient; }).length;
+                } else {
+                    valA = equipements.filter(e => e.id_wcontrat === a.id_wcontrat).length;
+                    valB = equipements.filter(e => e.id_wcontrat === b.id_wcontrat).length;
+                }
+            }
+            else { valA = a[col] || ''; valB = b[col] || ''; }
+            
+            if (typeof valA === 'number') return sortConfig.direction === 'asc' ? valA - valB : valB - valA;
+            const cmp = String(valA).localeCompare(String(valB));
+            return sortConfig.direction === 'asc' ? cmp : -cmp;
+        });
+    };
+    
+    const getPaginatedData = (data, type) => {
+        const page = currentPage[type] || 1;
+        const start = (page - 1) * PAGE_SIZE;
+        return data.slice(start, start + PAGE_SIZE);
+    };
+    
+    // Onglets
     const tabs = [
         { id: 'dashboard', label: 'Tableau de bord', icon: '📊', count: null },
         { id: 'equipements', label: 'Équipements', icon: '🛗', count: filteredStats.equipements },
@@ -19449,79 +19533,50 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
     ];
     
     const renderTabs = () => h('div', { 
-        style: { 
-            display: 'flex', gap: 4, background: COLORS.background, padding: 4, borderRadius: 12, 
-            marginBottom: 20, overflowX: 'auto', flexWrap: 'nowrap' 
-        } 
+        style: { display: 'flex', gap: 4, marginBottom: 20, overflowX: 'auto', paddingBottom: 4 }
     },
-        tabs.map(tab => h('button', {
-            key: tab.id,
-            onClick: () => { setActiveTab(tab.id); setCurrentPage(prev => ({ ...prev, [tab.id]: 1 })); setSearch(''); },
-            style: {
-                padding: '10px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
-                background: activeTab === tab.id ? COLORS.primary : 'transparent',
-                color: activeTab === tab.id ? 'white' : COLORS.textSecondary,
-                fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8,
-                whiteSpace: 'nowrap', transition: 'all 0.2s'
-            }
+        tabs.map(t => h('button', { 
+            key: t.id, className: `btn ${activeTab === t.id ? 'btn-primary' : 'btn-ghost'}`,
+            onClick: () => { setActiveTab(t.id); setFilters({ secteur: '', ville: '', marque: '', statut: '', client: '', technicien: '', statutDevis: '', dateFrom: '', dateTo: '' }); setSearch(''); },
+            style: { whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }
         },
-            h('span', null, tab.icon),
-            tab.label,
-            tab.count !== null && h('span', { 
-                style: { 
-                    padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700,
-                    background: activeTab === tab.id ? 'rgba(255,255,255,0.25)' : COLORS.border 
-                } 
-            }, tab.count.toLocaleString())
+            h('span', null, t.icon),
+            h('span', null, t.label),
+            t.count !== null && h('span', { style: { background: activeTab === t.id ? 'rgba(255,255,255,0.2)' : COLORS.background, padding: '2px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600 } }, t.count)
         ))
     );
     
     // ========== RENDER DASHBOARD ==========
     const renderDashboard = () => h('div', null,
-        // Message secteurs restreints
         userSectors && userSectors.length > 0 && h('div', { 
-            style: { 
-                padding: '12px 16px', marginBottom: 16, borderRadius: 8,
-                background: `${COLORS.info}15`, border: `1px solid ${COLORS.info}30`,
-                display: 'flex', alignItems: 'center', gap: 10
-            } 
+            style: { padding: '12px 16px', marginBottom: 16, borderRadius: 8, background: `${COLORS.info}15`, border: `1px solid ${COLORS.info}30`, display: 'flex', alignItems: 'center', gap: 10 } 
         },
             h('span', { style: { fontSize: 18 } }, '🔒'),
             h('div', null,
                 h('div', { style: { fontWeight: 500, fontSize: 13 } }, 'Accès limité aux secteurs :'),
                 h('div', { style: { display: 'flex', gap: 6, marginTop: 4 } },
-                    userSectors.map(s => h('span', { 
-                        key: s, className: 'badge', 
-                        style: { background: getSecteurColor(s), color: 'white', fontSize: 11 } 
-                    }, s))
+                    userSectors.map(s => h('span', { key: s, className: 'badge', style: { background: getSecteurColor(s), color: 'white', fontSize: 11 } }, s))
                 )
             )
         ),
         
-        // Stats principales
         h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 24 } },
             [
-                { label: 'Équipements', value: filteredStats.equipements, icon: '🛗', color: COLORS.info, bg: 'linear-gradient(135deg, #3B82F6, #1D4ED8)' },
-                { label: 'À l\'arrêt', value: filteredStats.arrets, icon: '⏸️', color: COLORS.danger, bg: 'linear-gradient(135deg, #EF4444, #DC2626)' },
-                { label: 'Pannes', value: filteredStats.pannes, icon: '🔧', color: COLORS.warning, bg: 'linear-gradient(135deg, #F59E0B, #D97706)' },
-                { label: 'Devis', value: filteredStats.devis, icon: '📄', color: COLORS.purple, bg: 'linear-gradient(135deg, #8B5CF6, #7C3AED)' },
-                { label: 'Clients', value: filteredStats.clients, icon: '👥', color: COLORS.teal, bg: 'linear-gradient(135deg, #14B8A6, #0D9488)' },
-                { label: 'Contrats', value: filteredStats.contrats, icon: '📋', color: COLORS.success, bg: 'linear-gradient(135deg, #10B981, #059669)' }
+                { label: 'Équipements', value: filteredStats.equipements, icon: '🛗', bg: 'linear-gradient(135deg, #3B82F6, #1D4ED8)', tab: 'equipements' },
+                { label: 'À l\'arrêt', value: filteredStats.arrets, icon: '⏸️', bg: 'linear-gradient(135deg, #EF4444, #DC2626)', tab: 'arrets' },
+                { label: 'Pannes', value: filteredStats.pannes, icon: '🔧', bg: 'linear-gradient(135deg, #F59E0B, #D97706)', tab: 'pannes' },
+                { label: 'Devis', value: filteredStats.devis, icon: '📄', bg: 'linear-gradient(135deg, #8B5CF6, #7C3AED)', tab: 'devis' },
+                { label: 'Clients', value: filteredStats.clients, icon: '👥', bg: 'linear-gradient(135deg, #14B8A6, #0D9488)', tab: 'clients' },
+                { label: 'Contrats', value: filteredStats.contrats, icon: '📋', bg: 'linear-gradient(135deg, #10B981, #059669)', tab: 'clients' }
             ].map(s => h('div', { 
-                key: s.label, className: 'card',
-                style: { padding: 20, background: s.bg, color: 'white', cursor: 'pointer' },
-                onClick: () => setActiveTab(s.label.toLowerCase().replace(' ', '').replace('à l\'arrêt', 'arrets'))
+                key: s.label, className: 'card', onClick: () => setActiveTab(s.tab),
+                style: { padding: 20, background: s.bg, color: 'white', cursor: 'pointer' }
             },
-                h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' } },
-                    h('div', null,
-                        h('div', { style: { fontSize: 13, opacity: 0.9 } }, `${s.icon} ${s.label}`),
-                        h('div', { style: { fontSize: 32, fontWeight: 700, marginTop: 8 } }, s.value.toLocaleString())
-                    )
-                )
+                h('div', { style: { fontSize: 13, opacity: 0.9 } }, `${s.icon} ${s.label}`),
+                h('div', { style: { fontSize: 32, fontWeight: 700, marginTop: 8 } }, s.value.toLocaleString())
             ))
         ),
         
-        // Statut du parc
         h('div', { className: 'card', style: { padding: 20, marginBottom: 20 } },
             h('h3', { style: { margin: '0 0 16px 0', fontSize: 16, fontWeight: 600 } }, '📊 Statut du parc'),
             h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 } },
@@ -19540,21 +19595,15 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
             )
         ),
         
-        // Répartition par secteur
         filteredStats.secteurs.length > 0 && h('div', { className: 'card', style: { padding: 20 } },
             h('h3', { style: { margin: '0 0 16px 0', fontSize: 16, fontWeight: 600 } }, '📍 Répartition par secteur'),
             h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12 } },
                 filteredStats.secteurs.map(s => {
                     const count = filteredByUserSectors.filter(e => e.secteur === s).length;
-                    const arretCount = arrets.filter(a => filteredByUserSectors.find(e => e.id_wsoucont === a.id_wsoucont && e.secteur === s)).length;
+                    const arretCount = arretsProcessed.filter(a => a._secteur === s).length;
                     return h('div', { 
-                        key: s, 
-                        onClick: () => { setActiveTab('equipements'); setFilters(f => ({ ...f, secteur: s })); },
-                        style: { 
-                            padding: 12, borderRadius: 8, cursor: 'pointer',
-                            background: COLORS.background, border: `2px solid ${getSecteurColor(s)}`,
-                            transition: 'all 0.2s'
-                        }
+                        key: s, onClick: () => { setActiveTab('equipements'); setFilters(f => ({ ...f, secteur: s })); },
+                        style: { padding: 12, borderRadius: 8, cursor: 'pointer', background: COLORS.background, border: `2px solid ${getSecteurColor(s)}` }
                     },
                         h('div', { style: { fontWeight: 600, fontSize: 14, color: getSecteurColor(s) } }, s),
                         h('div', { style: { display: 'flex', justifyContent: 'space-between', marginTop: 8 } },
@@ -19568,9 +19617,8 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
     );
     
     // ========== RENDER FILTRES ==========
-    const renderFilters = (type) => h('div', { className: 'card', style: { padding: 16, marginBottom: 16 } },
+    const renderFilters = (type, options = {}) => h('div', { className: 'card', style: { padding: 16, marginBottom: 16 } },
         h('div', { style: { display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' } },
-            // Recherche
             h('div', { className: 'header-search', style: { flex: 1, minWidth: 200 } },
                 h(Icon, { name: 'search', size: 16, color: COLORS.muted }),
                 h('input', { 
@@ -19580,63 +19628,78 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
                 })
             ),
             
-            // Filtres selon le type
-            (type === 'equipements' || type === 'pannes' || type === 'devis') && h('select', {
+            options.secteurs && h('select', {
                 className: 'form-select', value: filters.secteur, 
-                onChange: e => setFilters(f => ({ ...f, secteur: e.target.value })),
+                onChange: e => { setFilters(f => ({ ...f, secteur: e.target.value })); setCurrentPage(p => ({ ...p, [type]: 1 })); },
                 style: { width: 140 }
             },
                 h('option', { value: '' }, 'Tous secteurs'),
-                filterOptions.secteurs.map(s => h('option', { key: s, value: s }, s))
+                options.secteurs.map(s => h('option', { key: s, value: s }, s))
             ),
             
-            (type === 'equipements' || type === 'pannes') && h('select', {
+            options.villes && h('select', {
                 className: 'form-select', value: filters.ville, 
-                onChange: e => setFilters(f => ({ ...f, ville: e.target.value })),
+                onChange: e => { setFilters(f => ({ ...f, ville: e.target.value })); setCurrentPage(p => ({ ...p, [type]: 1 })); },
                 style: { width: 140 }
             },
                 h('option', { value: '' }, 'Toutes villes'),
-                filterOptions.villes.slice(0, 50).map(v => h('option', { key: v, value: v }, truncate(v, 20)))
+                options.villes.map(v => h('option', { key: v, value: v }, v))
             ),
             
-            type === 'equipements' && h('select', {
+            options.marques && h('select', {
+                className: 'form-select', value: filters.marque, 
+                onChange: e => { setFilters(f => ({ ...f, marque: e.target.value })); setCurrentPage(p => ({ ...p, [type]: 1 })); },
+                style: { width: 140 }
+            },
+                h('option', { value: '' }, 'Toutes marques'),
+                options.marques.map(m => h('option', { key: m, value: m }, m))
+            ),
+            
+            options.statuts && h('select', {
                 className: 'form-select', value: filters.statut, 
-                onChange: e => setFilters(f => ({ ...f, statut: e.target.value })),
-                style: { width: 120 }
+                onChange: e => { setFilters(f => ({ ...f, statut: e.target.value })); setCurrentPage(p => ({ ...p, [type]: 1 })); },
+                style: { width: 140 }
             },
                 h('option', { value: '' }, 'Tous statuts'),
-                h('option', { value: 'service' }, '✅ En service'),
+                h('option', { value: 'service' }, '✓ En service'),
                 h('option', { value: 'arret' }, '🚨 À l\'arrêt')
             ),
             
-            type === 'devis' && h('select', {
-                className: 'form-select', value: filters.statutDevis, 
-                onChange: e => setFilters(f => ({ ...f, statutDevis: e.target.value })),
-                style: { width: 130 }
+            options.techniciens && h('select', {
+                className: 'form-select', value: filters.technicien, 
+                onChange: e => { setFilters(f => ({ ...f, technicien: e.target.value })); setCurrentPage(p => ({ ...p, [type]: 1 })); },
+                style: { width: 160 }
             },
-                h('option', { value: '' }, 'Tous statuts'),
-                h('option', { value: '7' }, 'Facturés'),
-                h('option', { value: '5' }, 'Commandés'),
-                h('option', { value: '2' }, 'Acceptés'),
-                h('option', { value: '0' }, 'Refusés')
+                h('option', { value: '' }, 'Tous techniciens'),
+                options.techniciens.map(t => h('option', { key: t, value: t }, t))
             ),
             
-            // Reset
-            (search || Object.values(filters).some(v => v)) && h('button', {
-                className: 'btn btn-ghost btn-sm',
-                onClick: () => { setSearch(''); setFilters({ secteur: '', ville: '', marque: '', statut: '', client: '', technicien: '', statutDevis: '', dateFrom: '', dateTo: '' }); }
-            }, '✕ Reset')
+            options.statutsDevis && h('select', {
+                className: 'form-select', value: filters.statutDevis, 
+                onChange: e => { setFilters(f => ({ ...f, statutDevis: e.target.value })); setCurrentPage(p => ({ ...p, [type]: 1 })); },
+                style: { width: 140 }
+            },
+                h('option', { value: '' }, 'Tous statuts'),
+                h('option', { value: '7' }, 'Facturé'),
+                h('option', { value: '5' }, 'Commandé'),
+                h('option', { value: '2' }, 'Accepté'),
+                h('option', { value: '0' }, 'Refusé'),
+                h('option', { value: '3' }, 'Abandonné')
+            ),
+            
+            (filters.secteur || filters.ville || filters.marque || filters.statut || filters.technicien || filters.statutDevis || search) && 
+                h('button', { className: 'btn btn-ghost btn-sm', onClick: () => { setFilters({ secteur: '', ville: '', marque: '', statut: '', client: '', technicien: '', statutDevis: '', dateFrom: '', dateTo: '' }); setSearch(''); } }, '✕ Effacer')
         )
     );
     
     // ========== RENDER PAGINATION ==========
-    const renderPagination = (type, totalItems) => {
-        const totalPages = Math.ceil(totalItems / PAGE_SIZE);
+    const renderPagination = (type, total) => {
         const page = currentPage[type] || 1;
-        if (totalPages <= 1) return h('div', { style: { padding: 16, textAlign: 'center', color: COLORS.muted, fontSize: 13 } }, `${totalItems} résultat${totalItems > 1 ? 's' : ''}`);
+        const totalPages = Math.ceil(total / PAGE_SIZE);
+        if (totalPages <= 1) return null;
         
-        return h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderTop: `1px solid ${COLORS.border}` } },
-            h('span', { style: { fontSize: 13, color: COLORS.muted } }, `${(page-1)*PAGE_SIZE + 1}-${Math.min(page*PAGE_SIZE, totalItems)} sur ${totalItems}`),
+        return h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0' } },
+            h('span', { style: { fontSize: 13, color: COLORS.muted } }, `${(page-1)*PAGE_SIZE + 1}-${Math.min(page*PAGE_SIZE, total)} sur ${total}`),
             h('div', { style: { display: 'flex', gap: 4 } },
                 h('button', { className: 'btn btn-ghost btn-sm', disabled: page === 1, onClick: () => setCurrentPage(p => ({ ...p, [type]: page - 1 })) }, '←'),
                 Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
@@ -19645,19 +19708,15 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
                         if (page > 3) p = page - 2 + i;
                         if (page > totalPages - 2) p = totalPages - 4 + i;
                     }
-                    return h('button', { 
-                        key: p, className: `btn btn-${p === page ? 'primary' : 'ghost'} btn-sm`,
-                        onClick: () => setCurrentPage(prev => ({ ...prev, [type]: p }))
-                    }, p);
+                    return h('button', { key: p, className: `btn btn-${p === page ? 'primary' : 'ghost'} btn-sm`, onClick: () => setCurrentPage(prev => ({ ...prev, [type]: p })) }, p);
                 }),
                 h('button', { className: 'btn btn-ghost btn-sm', disabled: page === totalPages, onClick: () => setCurrentPage(p => ({ ...p, [type]: page + 1 })) }, '→')
             )
         );
     };
     
-    // ========== RENDER EQUIPEMENTS ==========
+    // ========== RENDER ÉQUIPEMENTS ==========
     const renderEquipements = () => {
-        const arretIds = new Set(arrets.map(a => a.id_wsoucont));
         let filtered = filteredByUserSectors.filter(eq => {
             if (search) {
                 const term = search.toLowerCase();
@@ -19665,18 +19724,20 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
             }
             if (filters.secteur && eq.secteur !== filters.secteur) return false;
             if (filters.ville && eq.ville !== filters.ville) return false;
+            if (filters.marque && eq.div1 !== filters.marque) return false;
             if (filters.statut === 'arret' && !arretIds.has(eq.id_wsoucont)) return false;
             if (filters.statut === 'service' && arretIds.has(eq.id_wsoucont)) return false;
             return true;
         });
         
-        filtered = getSortedData(filtered);
+        filtered = getSortedData(filtered, 'equipements');
         const paginated = getPaginatedData(filtered, 'equipements');
         
+        const sortIcon = (col) => sortConfig.column === col ? (sortConfig.direction === 'asc' ? ' ↑' : ' ↓') : '';
+        
         return h('div', null,
-            renderFilters('equipements'),
+            renderFilters('equipements', { secteurs: filterOptions.secteurs, villes: filterOptions.villes, marques: filterOptions.marques, statuts: true }),
             
-            // Bouton vue
             h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 } },
                 h('span', { style: { fontSize: 13, color: COLORS.muted } }, `${filtered.length} équipement${filtered.length > 1 ? 's' : ''}`),
                 h('button', { className: 'btn btn-secondary btn-sm', onClick: () => setViewMode(v => v === 'table' ? 'cards' : 'table') },
@@ -19685,22 +19746,17 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
             ),
             
             viewMode === 'table' ? 
-                // Vue tableau
                 h('div', { className: 'card' },
                     h('div', { style: { overflowX: 'auto' } },
                         h('table', { className: 'data-table' },
                             h('thead', null,
                                 h('tr', null,
-                                    ['ascenseur', 'immeuble', 'adresse', 'secteur', 'statut'].map(col => 
-                                        h('th', { 
-                                            key: col, onClick: () => handleSort(col), 
-                                            style: { cursor: 'pointer', whiteSpace: 'nowrap' } 
-                                        }, 
-                                            col === 'ascenseur' ? 'Appareil' : col.charAt(0).toUpperCase() + col.slice(1),
-                                            sortConfig.column === col && h('span', { style: { marginLeft: 4, color: COLORS.primary } }, sortConfig.direction === 'asc' ? '▲' : '▼')
-                                        )
-                                    ),
-                                    h('th', { style: { width: 80 } }, 'Actions')
+                                    h('th', { onClick: () => handleSort('ascenseur'), style: { cursor: 'pointer' } }, 'Équipement' + sortIcon('ascenseur')),
+                                    h('th', { onClick: () => handleSort('contrat'), style: { cursor: 'pointer' } }, 'Contrat' + sortIcon('contrat')),
+                                    h('th', { onClick: () => handleSort('ville'), style: { cursor: 'pointer' } }, 'Ville' + sortIcon('ville')),
+                                    h('th', { onClick: () => handleSort('marque'), style: { cursor: 'pointer' } }, 'Marque' + sortIcon('marque')),
+                                    h('th', { onClick: () => handleSort('secteur'), style: { cursor: 'pointer' } }, 'Secteur' + sortIcon('secteur')),
+                                    h('th', { onClick: () => handleSort('statut'), style: { cursor: 'pointer' } }, 'Statut' + sortIcon('statut'))
                                 )
                             ),
                             h('tbody', null,
@@ -19708,22 +19764,31 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
                                     ? h('tr', null, h('td', { colSpan: 6, style: { textAlign: 'center', padding: 40, color: COLORS.muted } }, 'Aucun équipement trouvé'))
                                     : paginated.map(eq => {
                                         const isArret = arretIds.has(eq.id_wsoucont);
+                                        const contrat = getEquipementContrat(eq);
+                                        const client = getEquipementClient(eq);
                                         return h('tr', { 
-                                            key: eq.id_wsoucont, 
-                                            onClick: () => openDetail('equipement', eq),
-                                            style: { cursor: 'pointer', background: isArret ? '#FEE2E2' : 'transparent' }
+                                            key: eq.id_wsoucont, onClick: () => openDetail('equipement', eq),
+                                            style: { cursor: 'pointer', background: isArret ? COLORS.dangerPastel : 'transparent' }
                                         },
-                                            h('td', null, h('span', { style: { fontFamily: 'monospace', fontWeight: 600, color: COLORS.primary } }, eq.ascenseur || `#${eq.id_wsoucont}`)),
-                                            h('td', null, truncate(eq.immeuble, 30)),
                                             h('td', null, 
-                                                h('div', { style: { fontSize: 13 } }, truncate(eq.adresse, 30)),
-                                                h('div', { style: { fontSize: 11, color: COLORS.muted } }, [eq.code_postal, eq.ville].filter(Boolean).join(' '))
+                                                h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+                                                    h('span', { style: { fontSize: 20 } }, isArret ? '⏸️' : '🛗'),
+                                                    h('div', null,
+                                                        h('div', { style: { fontWeight: 600, color: COLORS.primary } }, eq.ascenseur || `#${eq.id_wsoucont}`),
+                                                        h('div', { style: { fontSize: 12, color: COLORS.muted } }, truncate(eq.adresse, 30))
+                                                    )
+                                                )
                                             ),
-                                            h('td', null, eq.secteur && h('span', { className: 'badge', style: { background: getSecteurColor(eq.secteur), color: 'white' } }, eq.secteur)),
-                                            h('td', null, isArret ? h('span', { className: 'badge badge-danger' }, '🚨 Arrêt') : h('span', { className: 'badge badge-success' }, '✓')),
-                                            h('td', { onClick: e => e.stopPropagation() },
-                                                h('button', { className: 'btn btn-ghost btn-sm', onClick: () => openDetail('equipement', eq) }, h(Icon, { name: 'eye', size: 16 }))
-                                            )
+                                            h('td', null, contrat ? 
+                                                h('div', { onClick: e => { e.stopPropagation(); openDetail('contrat', contrat); }, style: { cursor: 'pointer' } },
+                                                    h('div', { style: { color: COLORS.info, fontWeight: 500 } }, truncate(contrat.immeuble || `Contrat #${contrat.id_wcontrat}`, 25)),
+                                                    client && h('div', { style: { fontSize: 11, color: COLORS.muted } }, truncate(client.nom, 20))
+                                                ) : '-'
+                                            ),
+                                            h('td', null, eq.ville || '-'),
+                                            h('td', null, eq.div1 || '-'),
+                                            h('td', null, eq.secteur ? h('span', { className: 'badge', style: { background: getSecteurColor(eq.secteur), color: 'white' } }, eq.secteur) : '-'),
+                                            h('td', null, isArret ? h('span', { className: 'badge badge-danger' }, '🚨 À l\'arrêt') : h('span', { className: 'badge badge-success' }, '✓ En service'))
                                         );
                                     })
                             )
@@ -19731,25 +19796,47 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
                     ),
                     renderPagination('equipements', filtered.length)
                 ) :
-                // Vue cartes
                 h('div', null,
-                    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 } },
+                    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 } },
                         paginated.map(eq => {
                             const isArret = arretIds.has(eq.id_wsoucont);
+                            const contrat = getEquipementContrat(eq);
+                            const client = getEquipementClient(eq);
                             return h('div', { 
-                                key: eq.id_wsoucont, className: 'card hover-lift',
-                                onClick: () => openDetail('equipement', eq),
-                                style: { padding: 16, cursor: 'pointer', borderLeft: `4px solid ${isArret ? COLORS.danger : getSecteurColor(eq.secteur)}` }
+                                key: eq.id_wsoucont, className: 'card hover-lift', onClick: () => openDetail('equipement', eq),
+                                style: { padding: 0, cursor: 'pointer', overflow: 'hidden' }
                             },
-                                h('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 12 } },
-                                    h('span', { style: { fontFamily: 'monospace', fontWeight: 700, color: COLORS.primary } }, eq.ascenseur || `#${eq.id_wsoucont}`),
-                                    isArret ? h('span', { className: 'badge badge-danger' }, '🚨') : h('span', { className: 'badge badge-success' }, '✓')
+                                h('div', { style: { padding: 16, borderBottom: `1px solid ${COLORS.border}` } },
+                                    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' } },
+                                        h('div', null,
+                                            h('div', { style: { fontWeight: 700, fontSize: 15, color: COLORS.primary } }, eq.ascenseur || `#${eq.id_wsoucont}`),
+                                            h('div', { style: { fontSize: 13, color: COLORS.muted, marginTop: 4 } }, eq.adresse || '-')
+                                        ),
+                                        h('span', { className: `badge ${isArret ? 'badge-danger' : 'badge-success'}` }, isArret ? '⏸️ Arrêt' : '✅ Service')
+                                    )
                                 ),
-                                h('div', { style: { fontWeight: 500, marginBottom: 4 } }, truncate(eq.immeuble, 35) || '-'),
-                                h('div', { style: { fontSize: 13, color: COLORS.muted } }, [eq.adresse, eq.ville].filter(Boolean).join(', ') || '-'),
-                                h('div', { style: { display: 'flex', gap: 8, marginTop: 12 } },
-                                    eq.secteur && h('span', { className: 'badge', style: { background: getSecteurColor(eq.secteur), color: 'white', fontSize: 10 } }, eq.secteur),
-                                    eq.div1 && h('span', { style: { fontSize: 11, color: COLORS.muted } }, `🔧 ${eq.div1}`)
+                                contrat && h('div', { 
+                                    onClick: e => { e.stopPropagation(); openDetail('contrat', contrat); },
+                                    style: { padding: '10px 16px', background: COLORS.background, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }
+                                },
+                                    h('span', null, '📋'),
+                                    h('div', { style: { flex: 1 } },
+                                        h('div', { style: { fontWeight: 500, fontSize: 13 } }, truncate(contrat.immeuble || `Contrat #${contrat.id_wcontrat}`, 30)),
+                                        client && h('div', { style: { fontSize: 11, color: COLORS.muted } }, `👤 ${truncate(client.nom, 25)}`)
+                                    ),
+                                    h('span', { style: { color: COLORS.muted } }, '→')
+                                ),
+                                h('div', { style: { padding: 16, display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 } },
+                                    [
+                                        { label: 'Ville', value: eq.ville },
+                                        { label: 'Secteur', value: eq.secteur },
+                                        { label: 'Marque', value: eq.div1 },
+                                        { label: 'Config', value: eq.div2 },
+                                        { label: 'Année', value: eq.div5 }
+                                    ].filter(f => f.value).map(f => h('div', { key: f.label },
+                                        h('div', { style: { fontSize: 10, color: COLORS.muted, textTransform: 'uppercase' } }, f.label),
+                                        h('div', { style: { fontSize: 13, fontWeight: 500 } }, f.value)
+                                    ))
                                 )
                             );
                         })
@@ -19761,41 +19848,54 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
     
     // ========== RENDER ARRÊTS ==========
     const renderArrets = () => {
-        let filtered = arrets.filter(a => {
+        const eqIds = new Set(filteredByUserSectors.map(e => e.id_wsoucont));
+        let filtered = arretsProcessed.filter(a => {
+            if (!eqIds.has(a.id_wsoucont)) return false;
             if (search) {
                 const term = search.toLowerCase();
-                if (![a.code, a.immeuble, a.ville, a.motif].some(f => (f||'').toLowerCase().includes(term))) return false;
+                if (![a._ascenseur, a._adresse, a._ville, a.motif, a.demandeur].some(f => (f||'').toLowerCase().includes(term))) return false;
             }
+            if (filters.secteur && a._secteur !== filters.secteur) return false;
+            if (filters.ville && a._ville !== filters.ville) return false;
             return true;
         });
         
+        filtered = getSortedData(filtered, 'arrets');
         const paginated = getPaginatedData(filtered, 'arrets');
         
+        const sortIcon = (col) => sortConfig.column === col ? (sortConfig.direction === 'asc' ? ' ↑' : ' ↓') : '';
+        
         return h('div', null,
-            renderFilters('arrets'),
+            renderFilters('arrets', { secteurs: filterOptions.secteursArrets, villes: filterOptions.villesArrets }),
+            
             h('div', { className: 'card' },
                 h('div', { style: { overflowX: 'auto' } },
                     h('table', { className: 'data-table' },
-                        h('thead', null, h('tr', null,
-                            h('th', null, 'Code'),
-                            h('th', null, 'Immeuble'),
-                            h('th', null, 'Ville'),
-                            h('th', null, 'Motif'),
-                            h('th', null, 'Date')
-                        )),
+                        h('thead', null,
+                            h('tr', null,
+                                h('th', { onClick: () => handleSort('date_appel'), style: { cursor: 'pointer' } }, 'Date' + sortIcon('date_appel')),
+                                h('th', { onClick: () => handleSort('ascenseur'), style: { cursor: 'pointer' } }, 'Appareil' + sortIcon('ascenseur')),
+                                h('th', null, 'Adresse'),
+                                h('th', { onClick: () => handleSort('ville'), style: { cursor: 'pointer' } }, 'Ville' + sortIcon('ville')),
+                                h('th', { onClick: () => handleSort('secteur'), style: { cursor: 'pointer' } }, 'Secteur' + sortIcon('secteur')),
+                                h('th', { onClick: () => handleSort('motif'), style: { cursor: 'pointer' } }, 'Motif' + sortIcon('motif')),
+                                h('th', { onClick: () => handleSort('demandeur'), style: { cursor: 'pointer' } }, 'Demandeur' + sortIcon('demandeur'))
+                            )
+                        ),
                         h('tbody', null,
                             paginated.length === 0 
-                                ? h('tr', null, h('td', { colSpan: 5, style: { textAlign: 'center', padding: 40, color: COLORS.muted } }, 'Aucun arrêt'))
+                                ? h('tr', null, h('td', { colSpan: 7, style: { textAlign: 'center', padding: 40, color: COLORS.muted } }, '✅ Aucun appareil à l\'arrêt'))
                                 : paginated.map(a => h('tr', { 
-                                    key: a.id || a.code, 
-                                    onClick: () => openDetail('arret', a),
-                                    style: { cursor: 'pointer' }
+                                    key: a.id || a.id_wsoucont, onClick: () => a._equip && openDetail('equipement', a._equip),
+                                    style: { cursor: 'pointer', background: COLORS.dangerPastel }
                                 },
-                                    h('td', null, h('span', { style: { fontFamily: 'monospace', fontWeight: 600, color: COLORS.danger } }, a.code)),
-                                    h('td', null, truncate(a.immeuble, 30)),
-                                    h('td', null, truncate(a.ville, 20)),
-                                    h('td', null, h('span', { className: 'badge badge-danger' }, truncate(a.motif, 30) || 'Non précisé')),
-                                    h('td', null, formatDateFR(a.date_arret || a.created_at))
+                                    h('td', null, formatDateFR(a.date_appel)),
+                                    h('td', null, h('span', { style: { color: COLORS.primary, fontWeight: 600 } }, a._ascenseur)),
+                                    h('td', null, truncate(a._adresse, 30)),
+                                    h('td', null, a._ville || '-'),
+                                    h('td', null, a._secteur ? h('span', { className: 'badge', style: { background: getSecteurColor(a._secteur), color: 'white' } }, a._secteur) : '-'),
+                                    h('td', null, truncate(a.motif, 25) || '-'),
+                                    h('td', null, a.demandeur || '-')
                                 ))
                         )
                     )
@@ -19807,45 +19907,63 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
     
     // ========== RENDER PANNES ==========
     const renderPannes = () => {
-        let filtered = pannes.filter(p => {
+        const eqIds = new Set(filteredByUserSectors.map(e => e.id_wsoucont));
+        let filtered = pannesProcessed.filter(p => {
+            if (!eqIds.has(p.id_wsoucont)) return false;
             if (search) {
                 const term = search.toLowerCase();
-                if (![p.code, p.immeuble, p.ville, p.motif, p.technicien].some(f => (f||'').toLowerCase().includes(term))) return false;
+                if (![p._ascenseur, p.libelle, p.motif, p._ville, p.depanneur].some(f => (f||'').toLowerCase().includes(term))) return false;
             }
-            if (filters.secteur && p.secteur !== filters.secteur) return false;
+            if (filters.secteur && p._secteur !== filters.secteur) return false;
+            if (filters.ville && p._ville !== filters.ville) return false;
+            if (filters.technicien && p.depanneur !== filters.technicien) return false;
             return true;
         });
         
+        filtered = getSortedData(filtered, 'pannes');
         const paginated = getPaginatedData(filtered, 'pannes');
         
+        const sortIcon = (col) => sortConfig.column === col ? (sortConfig.direction === 'asc' ? ' ↑' : ' ↓') : '';
+        
         return h('div', null,
-            renderFilters('pannes'),
+            renderFilters('pannes', { secteurs: filterOptions.secteursPannes, villes: filterOptions.villesPannes, techniciens: filterOptions.techniciens }),
+            
             h('div', { className: 'card' },
                 h('div', { style: { overflowX: 'auto' } },
                     h('table', { className: 'data-table' },
-                        h('thead', null, h('tr', null,
-                            h('th', null, 'Date'),
-                            h('th', null, 'Code'),
-                            h('th', null, 'Immeuble'),
-                            h('th', null, 'Motif'),
-                            h('th', null, 'Technicien')
-                        )),
+                        h('thead', null,
+                            h('tr', null,
+                                h('th', { onClick: () => handleSort('date_panne'), style: { cursor: 'pointer' } }, 'Date' + sortIcon('date_panne')),
+                                h('th', { onClick: () => handleSort('ascenseur'), style: { cursor: 'pointer' } }, 'Appareil' + sortIcon('ascenseur')),
+                                h('th', { onClick: () => handleSort('libelle'), style: { cursor: 'pointer' } }, 'Libellé' + sortIcon('libelle')),
+                                h('th', { onClick: () => handleSort('ville'), style: { cursor: 'pointer' } }, 'Ville' + sortIcon('ville')),
+                                h('th', { onClick: () => handleSort('secteur'), style: { cursor: 'pointer' } }, 'Secteur' + sortIcon('secteur')),
+                                h('th', { onClick: () => handleSort('depanneur'), style: { cursor: 'pointer' } }, 'Technicien' + sortIcon('depanneur')),
+                                h('th', { onClick: () => handleSort('duree'), style: { cursor: 'pointer' } }, 'Durée' + sortIcon('duree'))
+                            )
+                        ),
                         h('tbody', null,
                             paginated.length === 0 
-                                ? h('tr', null, h('td', { colSpan: 5, style: { textAlign: 'center', padding: 40, color: COLORS.muted } }, 'Aucune panne'))
+                                ? h('tr', null, h('td', { colSpan: 7, style: { textAlign: 'center', padding: 40, color: COLORS.muted } }, 'Aucune panne'))
                                 : paginated.map(p => h('tr', { 
-                                    key: p.id, 
-                                    onClick: () => openDetail('panne', p),
+                                    key: p.id_panne, onClick: () => openDetail('panne', p),
                                     style: { cursor: 'pointer' }
                                 },
                                     h('td', null, 
                                         h('div', null, formatDateFR(p.date_panne)),
-                                        h('div', { style: { fontSize: 11, color: COLORS.muted } }, p.heure_panne || '')
+                                        p.heure_inter && h('div', { style: { fontSize: 11, color: COLORS.muted } }, formatHeureFR(p.heure_inter))
                                     ),
-                                    h('td', null, h('span', { style: { fontFamily: 'monospace', color: COLORS.primary } }, p.code)),
-                                    h('td', null, truncate(p.immeuble, 25)),
-                                    h('td', null, truncate(p.motif, 35)),
-                                    h('td', null, truncate(p.technicien, 20) || '-')
+                                    h('td', null, 
+                                        h('span', { 
+                                            onClick: e => { e.stopPropagation(); p._equip && openDetail('equipement', p._equip); },
+                                            style: { color: COLORS.primary, fontWeight: 600, cursor: 'pointer' } 
+                                        }, p._ascenseur)
+                                    ),
+                                    h('td', null, truncate(p.libelle || p.motif, 30) || '-'),
+                                    h('td', null, p._ville || '-'),
+                                    h('td', null, p._secteur ? h('span', { className: 'badge', style: { background: getSecteurColor(p._secteur), color: 'white' } }, p._secteur) : '-'),
+                                    h('td', null, truncate(p.depanneur, 15) || '-'),
+                                    h('td', null, p.duree ? `${p.duree} min` : '-')
                                 ))
                         )
                     )
@@ -19857,51 +19975,68 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
     
     // ========== RENDER DEVIS ==========
     const renderDevis = () => {
-        let filtered = devis.filter(d => {
+        const eqIds = new Set(filteredByUserSectors.map(e => e.id_wsoucont));
+        let filtered = devisProcessed.filter(d => {
+            if (d.id_wsoucont && !eqIds.has(d.id_wsoucont)) return false;
             if (search) {
                 const term = search.toLowerCase();
-                if (![d.numero, d.immeuble, d.ville, d.objet].some(f => (f||'').toLowerCase().includes(term))) return false;
+                if (![d.numero, d._ascenseur, d.client, d.objet].some(f => (f||'').toLowerCase().includes(term))) return false;
             }
+            if (filters.secteur && d._secteur !== filters.secteur) return false;
+            if (filters.ville && d._ville !== filters.ville) return false;
             if (filters.statutDevis && String(d.statut) !== filters.statutDevis) return false;
             return true;
         });
         
+        filtered = getSortedData(filtered, 'devis');
         const paginated = getPaginatedData(filtered, 'devis');
-        const totalMontant = filtered.reduce((sum, d) => sum + (parseFloat(d.montant_ttc) || 0), 0);
+        const totalHT = filtered.reduce((sum, d) => sum + (parseFloat(d.montant_ht) || 0), 0);
+        
+        const sortIcon = (col) => sortConfig.column === col ? (sortConfig.direction === 'asc' ? ' ↑' : ' ↓') : '';
         
         return h('div', null,
-            renderFilters('devis'),
-            h('div', { style: { marginBottom: 12, padding: 12, background: COLORS.background, borderRadius: 8, display: 'flex', justifyContent: 'space-between' } },
-                h('span', { style: { color: COLORS.muted } }, `${filtered.length} devis`),
-                h('span', { style: { fontWeight: 600, color: COLORS.success } }, `Total: ${formatMontant(totalMontant)} €`)
+            renderFilters('devis', { secteurs: filterOptions.secteursDevis, villes: filterOptions.villesDevis, statutsDevis: true }),
+            
+            h('div', { style: { marginBottom: 12, padding: 12, background: COLORS.successPastel, borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                h('span', { style: { fontSize: 13, color: COLORS.success } }, `${filtered.length} devis`),
+                h('span', { style: { fontWeight: 700, fontSize: 16, color: COLORS.success } }, `Total HT: ${formatMontant(totalHT)} €`)
             ),
+            
             h('div', { className: 'card' },
                 h('div', { style: { overflowX: 'auto' } },
                     h('table', { className: 'data-table' },
-                        h('thead', null, h('tr', null,
-                            h('th', null, 'Numéro'),
-                            h('th', null, 'Date'),
-                            h('th', null, 'Immeuble'),
-                            h('th', null, 'Objet'),
-                            h('th', { style: { textAlign: 'right' } }, 'Montant TTC'),
-                            h('th', null, 'Statut')
-                        )),
+                        h('thead', null,
+                            h('tr', null,
+                                h('th', { onClick: () => handleSort('date_devis'), style: { cursor: 'pointer' } }, 'Date devis' + sortIcon('date_devis')),
+                                h('th', { onClick: () => handleSort('date_acceptation'), style: { cursor: 'pointer' } }, 'Date accept.' + sortIcon('date_acceptation')),
+                                h('th', { onClick: () => handleSort('numero'), style: { cursor: 'pointer' } }, 'Numéro' + sortIcon('numero')),
+                                h('th', { onClick: () => handleSort('ascenseur'), style: { cursor: 'pointer' } }, 'Appareil' + sortIcon('ascenseur')),
+                                h('th', { onClick: () => handleSort('client'), style: { cursor: 'pointer' } }, 'Client' + sortIcon('client')),
+                                h('th', { onClick: () => handleSort('montant'), style: { cursor: 'pointer', textAlign: 'right' } }, 'Montant HT' + sortIcon('montant')),
+                                h('th', { onClick: () => handleSort('statut'), style: { cursor: 'pointer' } }, 'Statut' + sortIcon('statut'))
+                            )
+                        ),
                         h('tbody', null,
                             paginated.length === 0 
-                                ? h('tr', null, h('td', { colSpan: 6, style: { textAlign: 'center', padding: 40, color: COLORS.muted } }, 'Aucun devis'))
+                                ? h('tr', null, h('td', { colSpan: 7, style: { textAlign: 'center', padding: 40, color: COLORS.muted } }, 'Aucun devis'))
                                 : paginated.map(d => {
                                     const statut = getDevisStatut(d.statut);
                                     return h('tr', { 
-                                        key: d.id, 
-                                        onClick: () => openDetail('devis', d),
+                                        key: d.id_devis, onClick: () => openDetail('devis', d),
                                         style: { cursor: 'pointer' }
                                     },
-                                        h('td', null, h('span', { style: { fontFamily: 'monospace', fontWeight: 600 } }, d.numero)),
                                         h('td', null, formatDateFR(d.date_devis)),
-                                        h('td', null, truncate(d.immeuble, 25)),
-                                        h('td', null, truncate(d.objet, 35)),
-                                        h('td', { style: { textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: COLORS.success } }, `${formatMontant(d.montant_ttc)} €`),
-                                        h('td', null, h('span', { className: 'badge', style: { background: `${statut.color}20`, color: statut.color } }, statut.label))
+                                        h('td', null, d._date_acceptation ? formatDateFR(d._date_acceptation) : '-'),
+                                        h('td', null, h('code', { style: { fontFamily: 'monospace', fontWeight: 600 } }, d.numero || `#${d.id_devis}`)),
+                                        h('td', null, 
+                                            h('span', { 
+                                                onClick: e => { e.stopPropagation(); d._equip && openDetail('equipement', d._equip); },
+                                                style: { color: COLORS.primary, fontWeight: 500, cursor: 'pointer' } 
+                                            }, d._ascenseur)
+                                        ),
+                                        h('td', null, truncate(d.client, 20) || '-'),
+                                        h('td', { style: { textAlign: 'right', fontWeight: 600, color: COLORS.success } }, d.montant_ht ? `${formatMontant(d.montant_ht)} €` : '-'),
+                                        h('td', null, h('span', { className: 'badge', style: { background: statut.bg, color: statut.color } }, statut.label))
                                     );
                                 })
                         )
@@ -19914,284 +20049,501 @@ const ParcAscenseursPage = ({ data, user, refresh, showToast }) => {
     
     // ========== RENDER CLIENTS & CONTRATS ==========
     const renderClientsContrats = () => {
+        // Compter les contrats et équipements par client
+        const contratsParClient = {};
+        const equipParClient = {};
+        contrats.forEach(ct => {
+            if (ct.id_wclient) contratsParClient[ct.id_wclient] = (contratsParClient[ct.id_wclient] || 0) + 1;
+        });
+        equipements.forEach(eq => {
+            const client = getEquipementClient(eq);
+            if (client) equipParClient[client.id_wclient] = (equipParClient[client.id_wclient] || 0) + 1;
+        });
+        
+        // Compter les équipements par contrat
+        const equipParContrat = {};
+        equipements.forEach(eq => {
+            if (eq.id_wcontrat) equipParContrat[eq.id_wcontrat] = (equipParContrat[eq.id_wcontrat] || 0) + 1;
+        });
+        
         return h('div', null,
             // Sous-onglets
             h('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } },
                 h('button', { 
-                    className: `btn btn-${clientsContratsTab === 'clients' ? 'primary' : 'secondary'}`,
+                    className: `btn ${clientsContratsTab === 'clients' ? 'btn-primary' : 'btn-ghost'}`,
                     onClick: () => setClientsContratsTab('clients')
-                }, `👤 Clients (${clients.length})`),
+                }, '👤 Clients'),
                 h('button', { 
-                    className: `btn btn-${clientsContratsTab === 'contrats' ? 'primary' : 'secondary'}`,
+                    className: `btn ${clientsContratsTab === 'contrats' ? 'btn-primary' : 'btn-ghost'}`,
                     onClick: () => setClientsContratsTab('contrats')
-                }, `📋 Contrats (${contrats.length})`)
+                }, '📋 Contrats')
             ),
             
-            clientsContratsTab === 'clients' ? 
-                // Clients
-                h('div', null,
-                    renderFilters('clients'),
-                    h('div', { className: 'card' },
-                        h('div', { style: { overflowX: 'auto' } },
-                            h('table', { className: 'data-table' },
-                                h('thead', null, h('tr', null,
-                                    h('th', null, 'Nom'),
-                                    h('th', null, 'Adresse'),
-                                    h('th', null, 'Ville'),
-                                    h('th', null, 'Contrats')
-                                )),
-                                h('tbody', null,
-                                    getPaginatedData(clients.filter(c => !search || c.nom?.toLowerCase().includes(search.toLowerCase())), 'clients').map(c => {
-                                        const nbContrats = contrats.filter(ct => ct.id_wclient === c.id_wclient).length;
-                                        return h('tr', { key: c.id || c.id_wclient, onClick: () => openDetail('client', c), style: { cursor: 'pointer' } },
-                                            h('td', null, h('span', { style: { fontWeight: 600 } }, truncate(c.nom, 40))),
-                                            h('td', null, truncate(c.adresse, 30)),
-                                            h('td', null, c.ville),
-                                            h('td', null, h('span', { className: 'badge badge-info' }, nbContrats))
-                                        );
-                                    })
-                                )
+            clientsContratsTab === 'clients' ? renderClients(contratsParClient, equipParClient) : renderContrats(equipParContrat)
+        );
+    };
+    
+    const renderClients = (contratsParClient, equipParClient) => {
+        let filtered = clients.filter(c => {
+            if (search) {
+                const term = search.toLowerCase();
+                if (![c.nom, c.ville, c.cod, c.telephone].some(f => (f||'').toLowerCase().includes(term))) return false;
+            }
+            if (filters.ville && c.ville !== filters.ville) return false;
+            return true;
+        });
+        
+        filtered = getSortedData(filtered, 'clients');
+        const paginated = getPaginatedData(filtered, 'clients');
+        
+        const sortIcon = (col) => sortConfig.column === col ? (sortConfig.direction === 'asc' ? ' ↑' : ' ↓') : '';
+        
+        return h('div', null,
+            renderFilters('clients', { villes: filterOptions.villesClients }),
+            
+            h('div', { className: 'card' },
+                h('div', { style: { overflowX: 'auto' } },
+                    h('table', { className: 'data-table' },
+                        h('thead', null,
+                            h('tr', null,
+                                h('th', { onClick: () => handleSort('cod'), style: { cursor: 'pointer' } }, 'Code' + sortIcon('cod')),
+                                h('th', { onClick: () => handleSort('nom'), style: { cursor: 'pointer' } }, 'Nom' + sortIcon('nom')),
+                                h('th', { onClick: () => handleSort('ville'), style: { cursor: 'pointer' } }, 'Ville' + sortIcon('ville')),
+                                h('th', { onClick: () => handleSort('contrats'), style: { cursor: 'pointer', textAlign: 'center' } }, 'Contrats' + sortIcon('contrats')),
+                                h('th', { onClick: () => handleSort('equipements'), style: { cursor: 'pointer', textAlign: 'center' } }, 'Équipements' + sortIcon('equipements')),
+                                h('th', { onClick: () => handleSort('telephone'), style: { cursor: 'pointer' } }, 'Téléphone' + sortIcon('telephone'))
                             )
                         ),
-                        renderPagination('clients', clients.filter(c => !search || c.nom?.toLowerCase().includes(search.toLowerCase())).length)
+                        h('tbody', null,
+                            paginated.length === 0 
+                                ? h('tr', null, h('td', { colSpan: 6, style: { textAlign: 'center', padding: 40, color: COLORS.muted } }, 'Aucun client'))
+                                : paginated.map(c => h('tr', { 
+                                    key: c.id_wclient, onClick: () => openDetail('client', c),
+                                    style: { cursor: 'pointer' }
+                                },
+                                    h('td', null, h('code', { style: { fontFamily: 'monospace' } }, c.cod || '-')),
+                                    h('td', null, h('strong', null, truncate(c.nom, 30) || '-')),
+                                    h('td', null, c.ville || '-'),
+                                    h('td', { style: { textAlign: 'center' } }, h('span', { className: 'badge badge-info' }, contratsParClient[c.id_wclient] || 0)),
+                                    h('td', { style: { textAlign: 'center' } }, h('span', { className: 'badge badge-success' }, equipParClient[c.id_wclient] || 0)),
+                                    h('td', null, c.telephone || '-')
+                                ))
+                        )
                     )
-                ) :
-                // Contrats
-                h('div', null,
-                    renderFilters('contrats'),
-                    h('div', { className: 'card' },
-                        h('div', { style: { overflowX: 'auto' } },
-                            h('table', { className: 'data-table' },
-                                h('thead', null, h('tr', null,
-                                    h('th', null, 'Numéro'),
-                                    h('th', null, 'Immeuble'),
-                                    h('th', null, 'Ville'),
-                                    h('th', null, 'Secteur'),
-                                    h('th', null, 'Équipements')
-                                )),
-                                h('tbody', null,
-                                    getPaginatedData(contrats.filter(c => !search || [c.numero, c.immeuble, c.ville].some(f => (f||'').toLowerCase().includes(search.toLowerCase()))), 'contrats').map(c => {
-                                        const nbEquip = equipements.filter(e => e.id_wcontrat === c.id_wcontrat).length;
-                                        return h('tr', { key: c.id || c.id_wcontrat, onClick: () => openDetail('contrat', c), style: { cursor: 'pointer' } },
-                                            h('td', null, h('span', { style: { fontFamily: 'monospace', fontWeight: 600, color: COLORS.info } }, c.numero)),
-                                            h('td', null, truncate(c.immeuble, 30)),
-                                            h('td', null, c.ville),
-                                            h('td', null, c.secteur && h('span', { className: 'badge', style: { background: getSecteurColor(c.secteur), color: 'white' } }, c.secteur)),
-                                            h('td', null, h('span', { className: 'badge badge-info' }, nbEquip))
-                                        );
-                                    })
-                                )
+                ),
+                renderPagination('clients', filtered.length)
+            )
+        );
+    };
+    
+    const renderContrats = (equipParContrat) => {
+        let filtered = contrats.filter(c => {
+            if (search) {
+                const term = search.toLowerCase();
+                const client = clientsMap[c.id_wclient];
+                if (![c.immeuble, c.ville, c.ascenseur, c.batiment, client?.nom].some(f => (f||'').toLowerCase().includes(term))) return false;
+            }
+            if (filters.secteur && c.secteur !== filters.secteur) return false;
+            if (filters.ville && c.ville !== filters.ville) return false;
+            return true;
+        });
+        
+        filtered = getSortedData(filtered, 'contrats');
+        const paginated = getPaginatedData(filtered, 'contrats');
+        
+        const sortIcon = (col) => sortConfig.column === col ? (sortConfig.direction === 'asc' ? ' ↑' : ' ↓') : '';
+        
+        return h('div', null,
+            renderFilters('contrats', { secteurs: filterOptions.secteursContrats, villes: filterOptions.villesContrats }),
+            
+            h('div', { className: 'card' },
+                h('div', { style: { overflowX: 'auto' } },
+                    h('table', { className: 'data-table' },
+                        h('thead', null,
+                            h('tr', null,
+                                h('th', null, 'ID'),
+                                h('th', { onClick: () => handleSort('client'), style: { cursor: 'pointer' } }, 'Client' + sortIcon('client')),
+                                h('th', { onClick: () => handleSort('immeuble'), style: { cursor: 'pointer' } }, 'Immeuble' + sortIcon('immeuble')),
+                                h('th', { onClick: () => handleSort('ville'), style: { cursor: 'pointer' } }, 'Ville' + sortIcon('ville')),
+                                h('th', { onClick: () => handleSort('secteur'), style: { cursor: 'pointer' } }, 'Secteur' + sortIcon('secteur')),
+                                h('th', { onClick: () => handleSort('equipements'), style: { cursor: 'pointer', textAlign: 'center' } }, 'Équipements' + sortIcon('equipements'))
                             )
                         ),
-                        renderPagination('contrats', contrats.filter(c => !search || [c.numero, c.immeuble].some(f => (f||'').toLowerCase().includes(search.toLowerCase()))).length)
+                        h('tbody', null,
+                            paginated.length === 0 
+                                ? h('tr', null, h('td', { colSpan: 6, style: { textAlign: 'center', padding: 40, color: COLORS.muted } }, 'Aucun contrat'))
+                                : paginated.map(c => {
+                                    const client = clientsMap[c.id_wclient];
+                                    return h('tr', { 
+                                        key: c.id_wcontrat, onClick: () => openDetail('contrat', c),
+                                        style: { cursor: 'pointer' }
+                                    },
+                                        h('td', null, h('code', { style: { fontFamily: 'monospace' } }, `#${c.id_wcontrat}`)),
+                                        h('td', null, h('strong', null, client ? truncate(client.nom, 25) : '-')),
+                                        h('td', null, truncate(c.immeuble, 25) || '-'),
+                                        h('td', null, c.ville || '-'),
+                                        h('td', null, c.secteur ? h('span', { className: 'badge', style: { background: getSecteurColor(c.secteur), color: 'white' } }, c.secteur) : '-'),
+                                        h('td', { style: { textAlign: 'center' } }, h('span', { className: 'badge badge-success' }, equipParContrat[c.id_wcontrat] || 0))
+                                    );
+                                })
+                        )
                     )
-                )
+                ),
+                renderPagination('contrats', filtered.length)
+            )
         );
     };
     
     // ========== RENDER DETAIL PANEL ==========
     const renderDetailPanel = () => {
-        if (!detailPanel.open) return null;
+        if (!detailPanel.open || !detailPanel.data) return null;
         
         const { type, data: item } = detailPanel;
         
-        return h('div', null,
-            // Overlay
-            h('div', { 
-                onClick: closeDetail,
-                style: { 
-                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
-                    background: 'rgba(0,0,0,0.5)', zIndex: 999 
-                } 
-            }),
-            // Panel
+        return h(Fragment, null,
+            h('div', { onClick: closeDetail, style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 999 } }),
             h('div', { 
                 style: { 
-                    position: 'fixed', top: 0, right: 0, width: 480, height: '100vh', 
-                    background: COLORS.card, borderLeft: `1px solid ${COLORS.border}`, 
-                    zIndex: 1000, overflowY: 'auto', animation: 'slideIn 0.3s ease'
-                } 
+                    position: 'fixed', top: 0, right: 0, width: 500, maxWidth: '90vw', height: '100vh',
+                    background: COLORS.card, boxShadow: '-4px 0 20px rgba(0,0,0,0.15)', zIndex: 1000, overflow: 'auto',
+                    animation: 'slideIn 0.3s ease'
+                }
             },
-                // Header
+                h('style', null, `@keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }`),
+                
                 h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 20, borderBottom: `1px solid ${COLORS.border}`, position: 'sticky', top: 0, background: COLORS.card, zIndex: 10 } },
                     h('h3', { style: { margin: 0, fontSize: 18, fontWeight: 600 } }, 
                         type === 'equipement' ? `🛗 ${item.ascenseur || '#' + item.id_wsoucont}` :
-                        type === 'arret' ? `⏸️ ${item.ascenseur || '#' + item.id_wsoucont}` :
-                        type === 'panne' ? `🔧 Panne ${item.ascenseur || '#' + item.id_wsoucont}` :
-                        type === 'devis' ? `📄 Devis ${item.numero}` :
+                        type === 'panne' ? `🔧 Panne #${item.id_panne}` :
+                        type === 'devis' ? `📄 Devis ${item.numero || '#' + item.id_devis}` :
                         type === 'client' ? `👤 ${truncate(item.nom, 25)}` :
-                        `📋 Contrat ${item.numero}`
+                        type === 'contrat' ? `📋 ${truncate(item.immeuble, 25) || 'Contrat #' + item.id_wcontrat}` : 'Détails'
                     ),
                     h('button', { onClick: closeDetail, className: 'btn btn-ghost' }, '✕')
                 ),
-                // Content
+                
                 h('div', { style: { padding: 20 } },
-                    // Détails selon le type
-                    type === 'equipement' && h('div', null,
-                        // Statut
-                        h('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } },
-                            arrets.some(a => a.id_wsoucont === item.id_wsoucont) 
-                                ? h('span', { className: 'badge badge-danger' }, '🚨 À l\'arrêt')
-                                : h('span', { className: 'badge badge-success' }, '✓ En service'),
-                            item.secteur && h('span', { className: 'badge', style: { background: getSecteurColor(item.secteur), color: 'white' } }, item.secteur)
-                        ),
-                        // Infos
-                        h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 } },
-                            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
-                                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'IMMEUBLE'),
-                                h('div', { style: { fontWeight: 500 } }, item.immeuble || '-')
-                            ),
-                            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
-                                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'MARQUE'),
-                                h('div', { style: { fontWeight: 500 } }, item.div1 || '-')
-                            ),
-                            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8, gridColumn: 'span 2' } },
-                                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'ADRESSE'),
-                                h('div', null, item.adresse || '-'),
-                                h('div', { style: { color: COLORS.muted } }, [item.code_postal, item.ville].filter(Boolean).join(' '))
-                            )
-                        ),
-                        // Historique pannes
-                        h('div', { style: { marginTop: 20 } },
-                            h('h4', { style: { margin: '0 0 12px 0', fontSize: 14, fontWeight: 600 } }, `🔧 Pannes (${pannes.filter(p => p.id_wsoucont === item.id_wsoucont).length})`),
-                            h('div', { style: { maxHeight: 200, overflowY: 'auto' } },
-                                pannes.filter(p => p.id_wsoucont === item.id_wsoucont).slice(0, 10).map(p =>
-                                    h('div', { key: p.id, style: { padding: 10, background: COLORS.background, borderRadius: 6, marginBottom: 8, borderLeft: `3px solid ${COLORS.warning}` } },
-                                        h('div', { style: { fontWeight: 500 } }, truncate(p.motif, 40)),
-                                        h('div', { style: { fontSize: 12, color: COLORS.muted } }, `${formatDateFR(p.date_panne)} - ${p.technicien || 'N/A'}`)
-                                    )
-                                )
-                            )
-                        ),
-                        // Historique devis
-                        h('div', { style: { marginTop: 20 } },
-                            h('h4', { style: { margin: '0 0 12px 0', fontSize: 14, fontWeight: 600 } }, `📄 Devis (${devis.filter(d => d.id_wsoucont === item.id_wsoucont).length})`),
-                            h('div', { style: { maxHeight: 200, overflowY: 'auto' } },
-                                devis.filter(d => d.id_wsoucont === item.id_wsoucont).slice(0, 5).map(d => {
-                                    const statut = getDevisStatut(d.statut);
-                                    return h('div', { key: d.id, style: { padding: 10, background: COLORS.background, borderRadius: 6, marginBottom: 8, borderLeft: `3px solid ${statut.color}` } },
-                                        h('div', { style: { display: 'flex', justifyContent: 'space-between' } },
-                                            h('span', { style: { fontWeight: 500 } }, d.numero),
-                                            h('span', { style: { fontWeight: 600, color: COLORS.success } }, `${formatMontant(d.montant_ttc)} €`)
-                                        ),
-                                        h('div', { style: { fontSize: 12, color: COLORS.muted } }, `${formatDateFR(d.date_devis)} - ${statut.label}`)
-                                    );
-                                })
-                            )
-                        )
-                    ),
-                    
-                    type === 'panne' && h('div', null,
-                        h('div', { style: { display: 'grid', gap: 12 } },
-                            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
-                                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'DATE & HEURE'),
-                                h('div', { style: { fontWeight: 500 } }, `${formatDateFR(item.date_panne)} à ${item.heure_panne || '-'}`)
-                            ),
-                            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
-                                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'MOTIF'),
-                                h('div', null, item.motif || '-')
-                            ),
-                            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
-                                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'TECHNICIEN'),
-                                h('div', { style: { fontWeight: 500 } }, item.technicien || '-')
-                            ),
-                            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
-                                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'IMMEUBLE'),
-                                h('div', null, item.immeuble || '-'),
-                                h('div', { style: { color: COLORS.muted } }, item.ville || '')
-                            )
-                        )
-                    ),
-                    
-                    type === 'devis' && h('div', null,
-                        h('div', { style: { padding: 16, background: `${COLORS.success}15`, borderRadius: 10, marginBottom: 16, textAlign: 'center' } },
-                            h('div', { style: { fontSize: 11, color: COLORS.muted } }, 'MONTANT TTC'),
-                            h('div', { style: { fontSize: 28, fontWeight: 700, color: COLORS.success } }, `${formatMontant(item.montant_ttc)} €`)
-                        ),
-                        h('div', { style: { display: 'grid', gap: 12 } },
-                            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
-                                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'OBJET'),
-                                h('div', null, item.objet || '-')
-                            ),
-                            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
-                                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'DATE'),
-                                h('div', null, formatDateFR(item.date_devis))
-                            ),
-                            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
-                                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'STATUT'),
-                                h('span', { className: 'badge', style: { background: `${getDevisStatut(item.statut).color}20`, color: getDevisStatut(item.statut).color } }, getDevisStatut(item.statut).label)
-                            )
-                        )
-                    ),
-                    
-                    (type === 'client' || type === 'contrat') && h('div', null,
-                        h('div', { style: { display: 'grid', gap: 12 } },
-                            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
-                                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, type === 'client' ? 'NOM' : 'IMMEUBLE'),
-                                h('div', { style: { fontWeight: 600 } }, item.nom || item.immeuble || '-')
-                            ),
-                            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
-                                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'ADRESSE'),
-                                h('div', null, item.adresse || '-'),
-                                h('div', { style: { color: COLORS.muted } }, [item.code_postal, item.ville].filter(Boolean).join(' '))
-                            )
-                        )
+                    type === 'equipement' && renderEquipementDetail(item),
+                    type === 'panne' && renderPanneDetail(item),
+                    type === 'devis' && renderDevisDetail(item),
+                    type === 'client' && renderClientDetail(item),
+                    type === 'contrat' && renderContratDetail(item)
+                )
+            )
+        );
+    };
+    
+    const renderEquipementDetail = (eq) => {
+        const isArret = arretIds.has(eq.id_wsoucont);
+        const contrat = getEquipementContrat(eq);
+        const client = getEquipementClient(eq);
+        const eqPannes = pannesProcessed.filter(p => p.id_wsoucont === eq.id_wsoucont).slice(0, 10);
+        const eqDevis = devisProcessed.filter(d => d.id_wsoucont === eq.id_wsoucont).slice(0, 5);
+        
+        return h('div', null,
+            h('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } },
+                isArret ? h('span', { className: 'badge badge-danger' }, '🚨 À l\'arrêt') : h('span', { className: 'badge badge-success' }, '✓ En service'),
+                eq.secteur && h('span', { className: 'badge', style: { background: getSecteurColor(eq.secteur), color: 'white' } }, eq.secteur)
+            ),
+            
+            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 } },
+                h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'IMMEUBLE'),
+                    h('div', { style: { fontWeight: 500 } }, eq.immeuble || '-')
+                ),
+                h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'MARQUE'),
+                    h('div', { style: { fontWeight: 500 } }, eq.div1 || '-')
+                ),
+                h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8, gridColumn: 'span 2' } },
+                    h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'ADRESSE'),
+                    h('div', null, eq.adresse || '-'),
+                    h('div', { style: { color: COLORS.muted } }, [eq.code_postal, eq.ville].filter(Boolean).join(' '))
+                ),
+                eq.div2 && h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'CONFIG'),
+                    h('div', { style: { fontWeight: 500 } }, eq.div2)
+                ),
+                eq.div5 && h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'ANNÉE'),
+                    h('div', { style: { fontWeight: 500 } }, eq.div5)
+                )
+            ),
+            
+            contrat && h('div', { 
+                onClick: () => openDetail('contrat', contrat),
+                style: { padding: 12, background: COLORS.infoPastel, borderRadius: 8, marginBottom: 20, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }
+            },
+                h('div', null,
+                    h('div', { style: { fontSize: 11, color: COLORS.info } }, '📋 CONTRAT'),
+                    h('div', { style: { fontWeight: 500, color: COLORS.info } }, contrat.immeuble || `#${contrat.id_wcontrat}`),
+                    client && h('div', { style: { fontSize: 12, color: COLORS.muted } }, `👤 ${client.nom}`)
+                ),
+                h('span', { style: { color: COLORS.info } }, '→')
+            ),
+            
+            h('div', { style: { marginBottom: 20 } },
+                h('h4', { style: { margin: '0 0 12px 0', fontSize: 14, fontWeight: 600 } }, `🔧 Pannes (${eqPannes.length})`),
+                eqPannes.length === 0 
+                    ? h('div', { style: { color: COLORS.muted, fontSize: 13 } }, 'Aucune panne enregistrée')
+                    : h('div', { style: { maxHeight: 200, overflowY: 'auto' } },
+                        eqPannes.map(p => h('div', { key: p.id_panne, style: { padding: 10, background: COLORS.background, borderRadius: 6, marginBottom: 8, borderLeft: `3px solid ${COLORS.warning}` } },
+                            h('div', { style: { fontWeight: 500 } }, truncate(p.libelle || p.motif, 40)),
+                            h('div', { style: { fontSize: 12, color: COLORS.muted } }, `${formatDateFR(p.date_panne)} - ${p.depanneur || 'N/A'}`)
+                        ))
                     )
+            ),
+            
+            h('div', null,
+                h('h4', { style: { margin: '0 0 12px 0', fontSize: 14, fontWeight: 600 } }, `📄 Devis (${eqDevis.length})`),
+                eqDevis.length === 0 
+                    ? h('div', { style: { color: COLORS.muted, fontSize: 13 } }, 'Aucun devis')
+                    : h('div', { style: { maxHeight: 200, overflowY: 'auto' } },
+                        eqDevis.map(d => {
+                            const statut = getDevisStatut(d.statut);
+                            return h('div', { key: d.id_devis, style: { padding: 10, background: COLORS.background, borderRadius: 6, marginBottom: 8, borderLeft: `3px solid ${statut.color}` } },
+                                h('div', { style: { display: 'flex', justifyContent: 'space-between' } },
+                                    h('span', { style: { fontWeight: 500 } }, d.numero || `#${d.id_devis}`),
+                                    h('span', { style: { fontWeight: 600, color: COLORS.success } }, d.montant_ht ? `${formatMontant(d.montant_ht)} €` : '-')
+                                ),
+                                h('div', { style: { fontSize: 12, color: COLORS.muted } }, `${formatDateFR(d.date_devis)} - ${statut.label}`)
+                            );
+                        })
+                    )
+            )
+        );
+    };
+    
+    const renderPanneDetail = (p) => h('div', null,
+        h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 } },
+            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'DATE'),
+                h('div', { style: { fontWeight: 500 } }, formatDateFR(p.date_panne))
+            ),
+            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'HEURE'),
+                h('div', { style: { fontWeight: 500 } }, formatHeureFR(p.heure_inter) || '-')
+            ),
+            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'TECHNICIEN'),
+                h('div', { style: { fontWeight: 500 } }, p.depanneur || '-')
+            ),
+            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'DURÉE'),
+                h('div', { style: { fontWeight: 500 } }, p.duree ? `${p.duree} min` : '-')
+            ),
+            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8, gridColumn: 'span 2' } },
+                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'LIBELLÉ'),
+                h('div', { style: { fontWeight: 500 } }, p.libelle || '-')
+            ),
+            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8, gridColumn: 'span 2' } },
+                h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'MOTIF'),
+                h('div', null, p.motif || '-')
+            )
+        ),
+        p._equip && h('div', { 
+            onClick: () => openDetail('equipement', p._equip),
+            style: { padding: 12, background: COLORS.primaryPastel, borderRadius: 8, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }
+        },
+            h('div', null,
+                h('div', { style: { fontSize: 11, color: COLORS.primary } }, '🛗 ÉQUIPEMENT'),
+                h('div', { style: { fontWeight: 500, color: COLORS.primary } }, p._ascenseur)
+            ),
+            h('span', { style: { color: COLORS.primary } }, '→')
+        )
+    );
+    
+    const renderDevisDetail = (d) => {
+        const statut = getDevisStatut(d.statut);
+        return h('div', null,
+            h('div', { style: { textAlign: 'center', padding: 20, background: COLORS.successPastel, borderRadius: 12, marginBottom: 20 } },
+                h('div', { style: { fontSize: 11, color: COLORS.success } }, 'MONTANT HT'),
+                h('div', { style: { fontSize: 32, fontWeight: 700, color: COLORS.success } }, d.montant_ht ? `${formatMontant(d.montant_ht)} €` : '-')
+            ),
+            
+            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 } },
+                h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'NUMÉRO'),
+                    h('div', { style: { fontWeight: 500, fontFamily: 'monospace' } }, d.numero || `#${d.id_devis}`)
+                ),
+                h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'STATUT'),
+                    h('span', { className: 'badge', style: { background: statut.bg, color: statut.color } }, statut.label)
+                ),
+                h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'DATE DEVIS'),
+                    h('div', { style: { fontWeight: 500 } }, formatDateFR(d.date_devis))
+                ),
+                h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'DATE ACCEPTATION'),
+                    h('div', { style: { fontWeight: 500 } }, d._date_acceptation ? formatDateFR(d._date_acceptation) : '-')
+                ),
+                h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8, gridColumn: 'span 2' } },
+                    h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'CLIENT'),
+                    h('div', { style: { fontWeight: 500 } }, d.client || '-')
+                ),
+                h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8, gridColumn: 'span 2' } },
+                    h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'OBJET'),
+                    h('div', null, d.objet || '-')
+                )
+            ),
+            
+            d._equip && h('div', { 
+                onClick: () => openDetail('equipement', d._equip),
+                style: { padding: 12, background: COLORS.primaryPastel, borderRadius: 8, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }
+            },
+                h('div', null,
+                    h('div', { style: { fontSize: 11, color: COLORS.primary } }, '🛗 ÉQUIPEMENT'),
+                    h('div', { style: { fontWeight: 500, color: COLORS.primary } }, d._ascenseur)
+                ),
+                h('span', { style: { color: COLORS.primary } }, '→')
+            )
+        );
+    };
+    
+    const renderClientDetail = (c) => {
+        const clientContrats = contrats.filter(ct => ct.id_wclient === c.id_wclient);
+        const clientEquipements = equipements.filter(eq => {
+            const client = getEquipementClient(eq);
+            return client && client.id_wclient === c.id_wclient;
+        });
+        
+        return h('div', null,
+            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 } },
+                h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'CODE'),
+                    h('div', { style: { fontWeight: 500, fontFamily: 'monospace' } }, c.cod || '-')
+                ),
+                h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'TÉLÉPHONE'),
+                    h('div', { style: { fontWeight: 500 } }, c.telephone || '-')
+                ),
+                h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8, gridColumn: 'span 2' } },
+                    h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'ADRESSE'),
+                    h('div', null, c.adresse || '-'),
+                    h('div', { style: { color: COLORS.muted } }, [c.code_postal, c.ville].filter(Boolean).join(' '))
+                )
+            ),
+            
+            h('div', { style: { display: 'flex', gap: 12, marginBottom: 20 } },
+                h('div', { style: { flex: 1, padding: 16, background: COLORS.infoPastel, borderRadius: 8, textAlign: 'center' } },
+                    h('div', { style: { fontSize: 24, fontWeight: 700, color: COLORS.info } }, clientContrats.length),
+                    h('div', { style: { fontSize: 12, color: COLORS.info } }, 'Contrats')
+                ),
+                h('div', { style: { flex: 1, padding: 16, background: COLORS.successPastel, borderRadius: 8, textAlign: 'center' } },
+                    h('div', { style: { fontSize: 24, fontWeight: 700, color: COLORS.success } }, clientEquipements.length),
+                    h('div', { style: { fontSize: 12, color: COLORS.success } }, 'Équipements')
+                )
+            ),
+            
+            clientContrats.length > 0 && h('div', null,
+                h('h4', { style: { margin: '0 0 12px 0', fontSize: 14, fontWeight: 600 } }, '📋 Contrats'),
+                h('div', { style: { maxHeight: 200, overflowY: 'auto' } },
+                    clientContrats.map(ct => h('div', { 
+                        key: ct.id_wcontrat, onClick: () => openDetail('contrat', ct),
+                        style: { padding: 10, background: COLORS.background, borderRadius: 6, marginBottom: 8, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }
+                    },
+                        h('div', null,
+                            h('div', { style: { fontWeight: 500 } }, ct.immeuble || `#${ct.id_wcontrat}`),
+                            h('div', { style: { fontSize: 12, color: COLORS.muted } }, ct.ville || '-')
+                        ),
+                        h('span', { style: { color: COLORS.muted } }, '→')
+                    ))
+                )
+            )
+        );
+    };
+    
+    const renderContratDetail = (c) => {
+        const client = clientsMap[c.id_wclient];
+        const contratEquipements = equipements.filter(eq => eq.id_wcontrat === c.id_wcontrat);
+        
+        return h('div', null,
+            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 } },
+                h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'ID CONTRAT'),
+                    h('div', { style: { fontWeight: 500, fontFamily: 'monospace' } }, `#${c.id_wcontrat}`)
+                ),
+                h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } },
+                    h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'SECTEUR'),
+                    c.secteur ? h('span', { className: 'badge', style: { background: getSecteurColor(c.secteur), color: 'white' } }, c.secteur) : h('div', null, '-')
+                ),
+                h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8, gridColumn: 'span 2' } },
+                    h('div', { style: { fontSize: 11, color: COLORS.muted, marginBottom: 4 } }, 'ADRESSE'),
+                    h('div', null, c.adresse || '-'),
+                    h('div', { style: { color: COLORS.muted } }, [c.code_postal, c.ville].filter(Boolean).join(' '))
+                )
+            ),
+            
+            client && h('div', { 
+                onClick: () => openDetail('client', client),
+                style: { padding: 12, background: COLORS.tealPastel, borderRadius: 8, marginBottom: 20, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }
+            },
+                h('div', null,
+                    h('div', { style: { fontSize: 11, color: COLORS.teal } }, '👤 CLIENT'),
+                    h('div', { style: { fontWeight: 500, color: COLORS.teal } }, client.nom)
+                ),
+                h('span', { style: { color: COLORS.teal } }, '→')
+            ),
+            
+            h('div', { style: { padding: 16, background: COLORS.successPastel, borderRadius: 8, textAlign: 'center', marginBottom: 20 } },
+                h('div', { style: { fontSize: 24, fontWeight: 700, color: COLORS.success } }, contratEquipements.length),
+                h('div', { style: { fontSize: 12, color: COLORS.success } }, 'Équipements')
+            ),
+            
+            contratEquipements.length > 0 && h('div', null,
+                h('h4', { style: { margin: '0 0 12px 0', fontSize: 14, fontWeight: 600 } }, '🛗 Équipements'),
+                h('div', { style: { maxHeight: 250, overflowY: 'auto' } },
+                    contratEquipements.map(eq => {
+                        const isArret = arretIds.has(eq.id_wsoucont);
+                        return h('div', { 
+                            key: eq.id_wsoucont, onClick: () => openDetail('equipement', eq),
+                            style: { padding: 10, background: isArret ? COLORS.dangerPastel : COLORS.background, borderRadius: 6, marginBottom: 8, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }
+                        },
+                            h('div', null,
+                                h('div', { style: { fontWeight: 500 } }, eq.ascenseur || `#${eq.id_wsoucont}`),
+                                h('div', { style: { fontSize: 12, color: COLORS.muted } }, eq.adresse || '-')
+                            ),
+                            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                                isArret ? h('span', { className: 'badge badge-danger', style: { fontSize: 10 } }, '🚨') : h('span', { className: 'badge badge-success', style: { fontSize: 10 } }, '✓'),
+                                h('span', { style: { color: COLORS.muted } }, '→')
+                            )
+                        );
+                    })
                 )
             )
         );
     };
     
     // ========== RENDER PRINCIPAL ==========
-    return h('div', { className: 'page-content' },
-        // Header
-        h('div', { className: 'page-header' },
-            h('div', null,
-                h('h1', { className: 'page-title' }, '🏢 Parc ascenseurs'),
-                h('p', { className: 'page-subtitle' }, 
-                    loading ? 'Chargement des données...' : `${stats.equipements} équipements • ${stats.secteurs.length} secteurs`,
-                    lastSync && h('span', { style: { marginLeft: 12, fontSize: 12, color: COLORS.muted } }, `Synchro: ${lastSync}`)
-                )
-            ),
-            h('div', { className: 'header-actions' },
-                h('button', { className: 'btn btn-secondary', onClick: loadAllData, disabled: loading }, 
-                    loading ? '⏳' : '🔄', ' Actualiser'
-                )
+    return h('div', { className: 'page-container' },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 } },
+            h('h1', { className: 'page-title' }, '🛗 Parc ascenseurs'),
+            h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+                lastSync && h('span', { style: { fontSize: 12, color: COLORS.muted } }, `Sync: ${lastSync}`),
+                h('button', { className: 'btn btn-secondary btn-sm', onClick: loadAllData, disabled: loading }, loading ? '⏳' : '🔄 Actualiser')
             )
         ),
         
-        // Onglets
         renderTabs(),
         
-        // Contenu selon l'onglet
-        loading 
-            ? h('div', { style: { textAlign: 'center', padding: 60, color: COLORS.muted } },
+        loading ? 
+            h('div', { className: 'card', style: { padding: 60, textAlign: 'center' } },
                 h('div', { className: 'spinner', style: { margin: '0 auto 16px' } }),
-                'Chargement des données Progilift...'
-            )
-            : activeTab === 'dashboard' ? renderDashboard()
-            : activeTab === 'equipements' ? renderEquipements()
-            : activeTab === 'arrets' ? renderArrets()
-            : activeTab === 'pannes' ? renderPannes()
-            : activeTab === 'devis' ? renderDevis()
-            : activeTab === 'clients' ? renderClientsContrats()
-            : null,
+                h('div', { style: { color: COLORS.muted } }, 'Chargement des données...')
+            ) :
+            activeTab === 'dashboard' ? renderDashboard() :
+            activeTab === 'equipements' ? renderEquipements() :
+            activeTab === 'arrets' ? renderArrets() :
+            activeTab === 'pannes' ? renderPannes() :
+            activeTab === 'devis' ? renderDevis() :
+            activeTab === 'clients' ? renderClientsContrats() : null,
         
-        // Panneau de détail
-        renderDetailPanel(),
-        
-        // Style animation
-        h('style', null, `@keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }`)
+        renderDetailPanel()
     );
 };
 
-// Variables temporaires pour compatibilité avec l'ancien code
-const ParcAscenseursPageLegacy_viewMode = 'list';
-const ParcAscenseursPageLegacy_search = '';
-const ParcAscenseursPageLegacy_filterSecteur = '';
-const ParcAscenseursPageLegacy_filterStatut = '';
-const ParcAscenseursPageLegacy_viewDevice = null;
-const ParcAscenseursPageLegacy_showCreateTask = null;
+
 
 
 // ==========================================
@@ -23741,14 +24093,14 @@ const UsersPage = ({ data, user, refresh, showToast }) => {
                 (form.sectors || []).length > 0 && h('div', { style: { marginTop: 8, fontSize: 12, color: COLORS.success } }, 
                     `✓ ${form.sectors.length} secteur(s) sélectionné(s)`
                 ),
-                (form.sectors || []).length === 0 && form.role !== 'admin' && h('div', { style: { marginTop: 8, fontSize: 12, color: COLORS.warning } }, 
+                (form.sectors || []).length === 0 && h('div', { style: { marginTop: 8, fontSize: 12, color: COLORS.warning } }, 
                     '⚠️ Aucun secteur = accès à tous les appareils'
                 )
             ),
             h('div', { style: { background: COLORS.background, padding: 12, borderRadius: 8, marginTop: 12 } },
                 h('div', { style: { fontSize: 12, fontWeight: 600, marginBottom: 8 } }, 'Permissions par défaut:'),
                 h('div', { style: { fontSize: 11, color: COLORS.muted } },
-                    h('div', null, '• Admin: Tout gérer (tous secteurs)'),
+                    h('div', null, '• Admin: Tout gérer (limité aux secteurs sélectionnés)'),
                     h('div', null, '• Technicien: Gérer stock, travaux, commandes, planning'),
                     h('div', null, '• Lecteur: Consulter uniquement')
                 )
@@ -28048,10 +28400,9 @@ const RequestsPage = ({ data, user, refresh, showToast }) => {
     const [selectedDevice, setSelectedDevice] = useState(null);
     const [isManualDevice, setIsManualDevice] = useState(false);
     
-    // Récupérer les secteurs de l'utilisateur
+    // Récupérer les secteurs de l'utilisateur (tous les rôles, y compris admin)
     const userSectors = useMemo(() => {
         try {
-            if (user?.role === 'admin') return null; // Admin = tous les secteurs
             const sectors = user?.sectors ? (typeof user.sectors === 'string' ? JSON.parse(user.sectors) : user.sectors) : [];
             return sectors.length > 0 ? sectors : null; // null = pas de restriction
         } catch (e) { return null; }
