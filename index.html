@@ -19334,19 +19334,31 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         
         // Si c'est une chaîne
         if (typeof dateVal === 'string') {
+            // Nettoyer les espaces
+            const cleaned = dateVal.trim();
+            
+            // Format YYYYMMDD (ex: "20260102")
+            if (/^\d{8}$/.test(cleaned)) {
+                const year = parseInt(cleaned.substring(0, 4));
+                const month = parseInt(cleaned.substring(4, 6)) - 1;
+                const day = parseInt(cleaned.substring(6, 8));
+                const d = new Date(year, month, day);
+                if (!isNaN(d.getTime())) return d;
+            }
+            
             // Format ISO (2024-01-15 ou 2024-01-15T10:30:00)
-            let d = new Date(dateVal);
+            let d = new Date(cleaned);
             if (!isNaN(d.getTime())) return d;
             
             // Format JJ/MM/AAAA
-            const parts = dateVal.split('/');
+            const parts = cleaned.split('/');
             if (parts.length === 3) {
                 d = new Date(parts[2], parts[1] - 1, parts[0]);
                 if (!isNaN(d.getTime())) return d;
             }
             
             // Format JJ-MM-AAAA
-            const parts2 = dateVal.split('-');
+            const parts2 = cleaned.split('-');
             if (parts2.length === 3 && parts2[0].length === 2) {
                 d = new Date(parts2[2], parts2[1] - 1, parts2[0]);
                 if (!isNaN(d.getTime())) return d;
