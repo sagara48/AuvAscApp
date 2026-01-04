@@ -19169,6 +19169,15 @@ const PlanningPage = ({ data, user, refresh, showToast }) => {
 // TOURNÉES TAB - Gestion des tournées d'entretien
 // ==========================================
 const TourneesTab = ({ equipements, user, showToast }) => {
+    // Fonction pour générer un UUID
+    const generateUUID = () => {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    };
+    
     // États principaux
     const [activeView, setActiveView] = useState('aplanifier');
     const [selectedWeek, setSelectedWeek] = useState(0);
@@ -19609,14 +19618,18 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         
         for (const sugg of suggsAPlanifier) {
             try {
+                const lieuDepart = getLieuDepartTechnicien(sugg.technicien?.id);
                 const { error } = await db.from('tournees').insert({
+                    id: generateUUID(),
                     nom: sugg.tournee.nom,
                     secteur: sugg.tournee.secteur,
                     date: sugg.date,
                     heure_debut: '08:00',
                     status: 'planifiee',
                     duree_estimee: sugg.tournee.dureeEntretien,
-                    technicien_id: sugg.technicien?.id || null
+                    temps_trajet: sugg.tournee.trajets?.total || 0,
+                    technicien_id: sugg.technicien?.id || null,
+                    lieu_depart_id: lieuDepart?.id || null
                 });
                 if (error) throw error;
                 success++;
@@ -19724,13 +19737,21 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         if (!selectedDef || !planifierData.date) return showToast('Sélectionnez une date', 'error');
         
         try {
+            const lieuDepart = planifierData.technicien_id 
+                ? getLieuDepartTechnicien(planifierData.technicien_id)
+                : (selectedLieuDepart || SIEGE_COORDS);
+            const trajets = calculerTempsTrajet(selectedDef.equipements, lieuDepart);
+            
             const insertData = {
+                id: generateUUID(),
                 nom: selectedDef.nom,
                 secteur: selectedDef.secteur,
                 date: planifierData.date,
                 heure_debut: planifierData.heure_debut || '08:00',
                 status: 'planifiee',
-                duree_estimee: selectedDef.dureeEntretien
+                duree_estimee: selectedDef.dureeEntretien,
+                temps_trajet: trajets.total || 0,
+                lieu_depart_id: lieuDepart?.id || null
             };
             
             // Ajouter technicien seulement si sélectionné
