@@ -150,6 +150,98 @@ def get_auth():
             return m.group(1)
     return None
 
+# ==== STEP 0: Types de planning (table de référence) ====
+def sync_type_planning():
+    wsid = get_auth()
+    if not wsid:
+        return {"status": "error", "message": "Auth failed"}
+    
+    resp = progilift_call("get_Synchro_Wtypepla", {"dhDerniereMajFichier": "2000-01-01T00:00:00"}, wsid, 30)
+    
+    # Parser les items - essayer différents tags
+    items = parse_items(resp, "tabListeWtypepla")
+    if not items:
+        items = parse_items(resp, "ST_Wtypepla")
+    if not items:
+        items = parse_items(resp, "Wtypepla")
+    
+    if not items:
+        return {"status": "error", "message": "No data found in Wtypepla response"}
+    
+    # Supprimer et recréer les données
+    supabase_delete('type_planning')
+    inserted = 0
+    
+    for item in items:
+        code = safe_str(item.get('TYPEPLANNING') or item.get('typeplanning'), 50)
+        nb_visites = safe_int(item.get('NB_VISITES') or item.get('nb_visites'))
+        libelle = safe_str(item.get('LIBELLEPLAN') or item.get('libelleplan'), 200)
+        id_type = safe_int(item.get('IDWTYPEPLA') or item.get('idwtypepla'))
+        
+        if code:
+            result = supabase_insert('type_planning', {
+                'id_wtypepla': id_type,
+                'code': code,
+                'nb_visites': nb_visites,
+                'libelle': libelle,
+                'updated_at': datetime.now().isoformat()
+            })
+            if result:
+                inserted += 1
+    
+    return {
+        "status": "success", 
+        "step": 0, 
+        "type_planning": len(items), 
+        "inserted": inserted,
+        "next": "?step=1"
+    }
+
+# ==== STEP 4: Mise à jour nb_visites_an ====
+def update_nb_visites():
+    """Met à jour nb_visites_an dans equipements en faisant la jointure avec type_planning"""
+    if not SUPABASE_URL:
+        return {"status": "error", "message": "SUPABASE_URL not set"}
+    
+    # Récupérer la table type_planning
+    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/type_planning?select=code,nb_visites"
+    headers = {
+        'apikey': SUPABASE_KEY,
+        'Authorization': f'Bearer {SUPABASE_KEY}'
+    }
+    
+    status, body = http_request(url, 'GET', None, headers, 30)
+    if status != 200:
+        return {"status": "error", "message": f"Failed to fetch type_planning: {status}"}
+    
+    type_planning = json.loads(body)
+    type_map = {tp['code']: tp['nb_visites'] for tp in type_planning if tp.get('code')}
+    
+    # Récupérer les équipements avec typeplanning
+    url2 = f"{SUPABASE_URL.rstrip('/')}/rest/v1/equipements?select=id_wsoucont,typeplanning&typeplanning=not.is.null"
+    status2, body2 = http_request(url2, 'GET', None, headers, 60)
+    if status2 != 200:
+        return {"status": "error", "message": f"Failed to fetch equipements: {status2}"}
+    
+    equipements = json.loads(body2)
+    updated = 0
+    
+    for eq in equipements:
+        typeplanning = eq.get('typeplanning')
+        if typeplanning and typeplanning in type_map:
+            nb_visites = type_map[typeplanning]
+            if supabase_update('equipements', 'id_wsoucont', eq['id_wsoucont'], {'nb_visites_an': nb_visites}):
+                updated += 1
+    
+    return {
+        "status": "success",
+        "step": 4,
+        "type_planning_count": len(type_map),
+        "equipements_with_planning": len(equipements),
+        "updated": updated,
+        "message": "nb_visites_an updated!"
+    }
+
 # ==== STEP 1: Arrêts ====
 def sync_arrets():
     wsid = get_auth()
@@ -494,6 +586,8 @@ class handler(BaseHTTPRequestHandler):
             
             if mode == 'cron':
                 result = sync_cron()
+            elif step == '0':
+                result = sync_type_planning()
             elif step == '1':
                 result = sync_arrets()
             elif step == '2':
@@ -502,6 +596,8 @@ class handler(BaseHTTPRequestHandler):
                 result = sync_passages(sector)
             elif step == '3':
                 result = sync_pannes(period)
+            elif step == '4':
+                result = update_nb_visites()
             else:
                 result = {
                     "status": "ready",
@@ -510,10 +606,12 @@ class handler(BaseHTTPRequestHandler):
                     "periods_count": len(PERIODS),
                     "endpoints": {
                         "cron": "?mode=cron → Sync rapide (arrêts + pannes récentes)",
+                        "step0": "?step=0 → Types planning (table référence nb_visites)",
                         "step1": "?step=1 → Arrêts",
                         "step2": "?step=2&sector=0 → Équipements Wsoucont (0-21)",
                         "step2b": "?step=2b&sector=0 → Wsoucont2: passages + DAT + TXT (0-21)",
-                        "step3": "?step=3&period=0 → Pannes (0-6)"
+                        "step3": "?step=3&period=0 → Pannes (0-6)",
+                        "step4": "?step=4 → Mise à jour nb_visites_an"
                     },
                     "wsoucont2_fields": {
                         "passages": "LIB1-10, DATEPASS1-10",
@@ -521,7 +619,7 @@ class handler(BaseHTTPRequestHandler):
                         "textes": "TXT1-5",
                         "raw": "data_wsoucont2 (JSON complet)"
                     },
-                    "start_full": "?step=1",
+                    "start_full": "?step=0",
                     "start_cron": "?mode=cron"
                 }
         except Exception as e:
