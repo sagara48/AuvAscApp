@@ -19319,6 +19319,50 @@ const TourneesTab = ({ equipements, user, showToast }) => {
     const formatCycle = (v) => ({ 1: '1x/an', 2: '2x/an', 3: '3x/an', 4: '4x/an', 6: '6x/an', 12: '12x/an' }[v] || `${v}x/an`);
     const getFrequenceColor = (v) => v <= 2 ? '#6366F1' : v <= 4 ? '#3B82F6' : v <= 6 ? '#10B981' : '#F59E0B';
     
+    // Helper pour parser les dates de manière robuste
+    const parseDate = useCallback((dateVal) => {
+        if (!dateVal) return null;
+        
+        // Si c'est déjà une Date valide
+        if (dateVal instanceof Date && !isNaN(dateVal.getTime())) return dateVal;
+        
+        // Si c'est un timestamp
+        if (typeof dateVal === 'number') {
+            const d = new Date(dateVal);
+            return isNaN(d.getTime()) ? null : d;
+        }
+        
+        // Si c'est une chaîne
+        if (typeof dateVal === 'string') {
+            // Format ISO (2024-01-15 ou 2024-01-15T10:30:00)
+            let d = new Date(dateVal);
+            if (!isNaN(d.getTime())) return d;
+            
+            // Format JJ/MM/AAAA
+            const parts = dateVal.split('/');
+            if (parts.length === 3) {
+                d = new Date(parts[2], parts[1] - 1, parts[0]);
+                if (!isNaN(d.getTime())) return d;
+            }
+            
+            // Format JJ-MM-AAAA
+            const parts2 = dateVal.split('-');
+            if (parts2.length === 3 && parts2[0].length === 2) {
+                d = new Date(parts2[2], parts2[1] - 1, parts2[0]);
+                if (!isNaN(d.getTime())) return d;
+            }
+        }
+        
+        return null;
+    }, []);
+    
+    // Helper pour formater une date de manière sûre
+    const formatDate = useCallback((dateVal) => {
+        const d = parseDate(dateVal);
+        if (!d) return null;
+        return d.toLocaleDateString('fr-FR');
+    }, [parseDate]);
+    
     // ========== DISPONIBILITÉS ==========
     
     const isJourFerie = useCallback((date) => {
@@ -19377,8 +19421,8 @@ const TourneesTab = ({ equipements, user, showToast }) => {
             // Utiliser la dernière visite d'entretien depuis la table pannes
             const derniereVisiteEq = visitesEntretien[eq.id_wsoucont];
             if (derniereVisiteEq) {
-                const datVisite = new Date(derniereVisiteEq);
-                if (!grouped[key].derniereVisite || datVisite > grouped[key].derniereVisite) {
+                const datVisite = parseDate(derniereVisiteEq);
+                if (datVisite && (!grouped[key].derniereVisite || datVisite > grouped[key].derniereVisite)) {
                     grouped[key].derniereVisite = datVisite;
                 }
             }
@@ -19409,7 +19453,7 @@ const TourneesTab = ({ equipements, user, showToast }) => {
             if (secteurCmp !== 0) return secteurCmp;
             return (a.ordre || 0) - (b.ordre || 0);
         });
-    }, [equipementsFiltres, getVisitesParAn, calculerTempsTrajet, isWellGeolocated, selectedLieuDepart, visitesEntretien]);
+    }, [equipementsFiltres, getVisitesParAn, calculerTempsTrajet, isWellGeolocated, selectedLieuDepart, visitesEntretien, parseDate]);
     
     // Grouper par secteur pour la vue liste
     const tourneesParSecteur = useMemo(() => {
@@ -19860,8 +19904,8 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         ),
         
         h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 } },
-            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } }, h('div', { style: { fontSize: 11, color: COLORS.muted } }, 'Dernière visite'), h('div', { style: { fontSize: 14, fontWeight: 600 } }, selectedDef.derniereVisite?.toLocaleDateString('fr-FR') || '-')),
-            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } }, h('div', { style: { fontSize: 11, color: COLORS.muted } }, 'Prochaine (', selectedDef.cycleJours, 'j)'), h('div', { style: { fontSize: 14, fontWeight: 600, color: selectedDef.statut === 'retard' ? COLORS.danger : COLORS.text } }, selectedDef.prochaineVisite?.toLocaleDateString('fr-FR') || '-'))
+            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } }, h('div', { style: { fontSize: 11, color: COLORS.muted } }, 'Dernière visite'), h('div', { style: { fontSize: 14, fontWeight: 600 } }, formatDate(selectedDef.derniereVisite) || '-')),
+            h('div', { style: { padding: 12, background: COLORS.background, borderRadius: 8 } }, h('div', { style: { fontSize: 11, color: COLORS.muted } }, 'Prochaine (', selectedDef.cycleJours, 'j)'), h('div', { style: { fontSize: 14, fontWeight: 600, color: selectedDef.statut === 'retard' ? COLORS.danger : COLORS.text } }, formatDate(selectedDef.prochaineVisite) || '-'))
         ),
         
         h('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } },
@@ -19875,7 +19919,8 @@ const TourneesTab = ({ equipements, user, showToast }) => {
         h('div', { style: { maxHeight: 280, overflowY: 'auto' } },
             selectedDef.equipements.map((eq, idx) => {
                 const derniereVisiteEq = visitesEntretien[eq.id_wsoucont];
-                const joursDepuis = derniereVisiteEq ? Math.floor((new Date() - new Date(derniereVisiteEq)) / 86400000) : null;
+                const dateParsed = parseDate(derniereVisiteEq);
+                const joursDepuis = dateParsed ? Math.floor((new Date() - dateParsed) / 86400000) : null;
                 return h('div', { key: eq.id || idx, style: { display: 'flex', alignItems: 'center', gap: 10, padding: 10, background: COLORS.background, borderRadius: 8, marginBottom: 6 } },
                     h('span', { style: { width: 24, height: 24, borderRadius: '50%', background: COLORS.primary, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, flexShrink: 0 } }, idx + 1),
                     h('div', { style: { flex: 1, minWidth: 0 } },
@@ -19968,7 +20013,7 @@ const TourneesTab = ({ equipements, user, showToast }) => {
                                         h('div', { style: { fontSize: 11, color: COLORS.muted } }, 
                                             def.equipements.length, ' éq. • ',
                                             Math.round(def.dureeTotale / 60 * 10) / 10, 'h • ',
-                                            def.derniereVisite ? `Dern: ${def.derniereVisite.toLocaleDateString('fr-FR')}` : 'Jamais'
+                                            def.derniereVisite ? `Dern: ${formatDate(def.derniereVisite) || '-'}` : 'Jamais'
                                         )
                                     ),
                                     h('span', { style: { padding: '3px 8px', background: getFrequenceColor(def.visitesParAn) + '20', color: getFrequenceColor(def.visitesParAn), borderRadius: 12, fontSize: 10 } }, formatCycle(def.visitesParAn)),
@@ -19979,7 +20024,8 @@ const TourneesTab = ({ equipements, user, showToast }) => {
                                 isTourneeExpanded && h('div', { style: { background: COLORS.background, borderBottom: `1px solid ${COLORS.border}` } },
                                     def.equipements.map((eq, idx) => {
                                         const derniereVisiteEq = visitesEntretien[eq.id_wsoucont];
-                                        const joursDepuis = derniereVisiteEq ? Math.floor((new Date() - new Date(derniereVisiteEq)) / 86400000) : null;
+                                        const dateParsed = parseDate(derniereVisiteEq);
+                                        const joursDepuis = dateParsed ? Math.floor((new Date() - dateParsed) / 86400000) : null;
                                         const cycleEq = getCycleJours(getVisitesParAn(eq));
                                         const enRetard = joursDepuis !== null && joursDepuis > cycleEq;
                                         
