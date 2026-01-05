@@ -31518,7 +31518,7 @@ const SettingsPage = ({ data, user, refresh, showToast }) => {
                     ),
                     
                     // Notifications Tab
-                    activeTab === 'notifications' \&\& h('div', null,
+                    activeTab === 'notifications' && h('div', null,
                         h('h3', { style: { marginBottom: 20, fontSize: 18, fontWeight: 600 } }, '🔔 Préférences de Notifications'),
                         h(NotificationPreferences, { user, showToast })
                     ),
