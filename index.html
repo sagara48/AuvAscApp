@@ -16953,10 +16953,6 @@ const OrdersPage = ({ data, user, refresh, showToast }) => {
         }));
     }, [data.parts]);
     
-    // v5.8 - États sélection multiple
-    const [selectedItems, setSelectedItems] = useState([]);
-    const [contextMenu, setContextMenu] = useState({ show: false, x: 0, y: 0, item: null });
-    
     // États autocomplétion Progilift pour champ Appareil
     const [progiliftAscenseurs, setProgiliftAscenseurs] = useState([]);
     const [loadingAscenseurs, setLoadingAscenseurs] = useState(false);
