@@ -40776,6 +40776,70 @@ const OfflineBanner = ({ isOnline }) => {
     );
 };
 
+// Shortcuts Help Modal
+const ShortcutsHelp = ({ isOpen, onClose }) => {
+    if (!isOpen) return null;
+    
+    const shortcuts = [
+        { category: 'Navigation', items: [
+            { keys: ['Ctrl', 'K'], desc: 'Ouvrir la recherche rapide' },
+            { keys: ['Ctrl', '1-9'], desc: 'Naviguer vers une page' },
+            { keys: ['Esc'], desc: 'Fermer les modals' }
+        ]},
+        { category: 'Actions', items: [
+            { keys: ['Ctrl', 'N'], desc: 'Nouvel élément' },
+            { keys: ['Ctrl', 'S'], desc: 'Sauvegarder' },
+            { keys: ['Ctrl', 'E'], desc: 'Exporter' }
+        ]},
+        { category: 'Vues', items: [
+            { keys: ['Ctrl', 'P'], desc: 'Mode présentation' },
+            { keys: ['Ctrl', 'D'], desc: 'Basculer thème sombre' },
+            { keys: ['?'], desc: 'Afficher cette aide' }
+        ]}
+    ];
+    
+    return h('div', { 
+        className: 'modal-overlay',
+        onClick: (e) => e.target.className === 'modal-overlay' && onClose()
+    },
+        h('div', { className: 'modal', style: { maxWidth: 500 } },
+            h('div', { className: 'modal-header' },
+                h('h2', { className: 'modal-title' }, '⌨️ Raccourcis clavier'),
+                h('button', { className: 'modal-close', onClick: onClose }, '×')
+            ),
+            h('div', { className: 'modal-body' },
+                shortcuts.map(cat => h('div', { key: cat.category, style: { marginBottom: 20 } },
+                    h('h4', { style: { fontSize: 14, fontWeight: 600, marginBottom: 10, color: COLORS.muted, textTransform: 'uppercase' } }, cat.category),
+                    h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+                        cat.items.map((item, i) => h('div', { 
+                            key: i, 
+                            style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' }
+                        },
+                            h('span', { style: { color: COLORS.textSecondary } }, item.desc),
+                            h('div', { style: { display: 'flex', gap: 4 } },
+                                item.keys.map((key, j) => h('kbd', {
+                                    key: j,
+                                    style: {
+                                        padding: '4px 8px',
+                                        background: COLORS.background,
+                                        border: '1px solid ' + COLORS.border,
+                                        borderRadius: 4,
+                                        fontSize: 12,
+                                        fontFamily: 'monospace'
+                                    }
+                                }, key))
+                            )
+                        ))
+                    )
+                ))
+            ),
+            h('div', { className: 'modal-footer' },
+                h('button', { className: 'btn btn-primary', onClick: onClose }, 'Fermer')
+            )
+        )
+    );
+};
+
 const App = () => {
     // v5.0 - Nouveaux états
     const [showCommandPalette, setShowCommandPalette] = useState(false);
