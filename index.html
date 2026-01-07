@@ -1008,7 +1008,7 @@ const h = React.createElement;
 // ============================================
 // SUPABASE CLIENT
 // ============================================
-const supabase = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+const supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
 
 // ============================================
 // UTILITIES
@@ -1185,13 +1185,13 @@ const OfflineQueue = {
         const { table, type, data, id } = action;
         switch (type) {
             case 'insert':
-                await supabase.from(table).insert(data);
+                await supabaseClient.from(table).insert(data);
                 break;
             case 'update':
-                await supabase.from(table).update(data).eq('id', id);
+                await supabaseClient.from(table).update(data).eq('id', id);
                 break;
             case 'delete':
-                await supabase.from(table).delete().eq('id', id);
+                await supabaseClient.from(table).delete().eq('id', id);
                 break;
         }
     },
@@ -1226,7 +1226,7 @@ const API = {
         }
         
         try {
-            let query = supabase.from(table);
+            let query = supabaseClient.from(table);
             
             switch (action) {
                 case 'select':
@@ -1323,7 +1323,7 @@ const RealtimeService = {
         const listenerId = generateId();
         
         if (!this.channels.has(table)) {
-            const channel = supabase
+            const channel = supabaseClient
                 .channel(`public:${table}`)
                 .on('postgres_changes', 
                     { event: '*', schema: 'public', table },
@@ -1359,7 +1359,7 @@ const RealtimeService = {
         if (filtered.length === 0) {
             const channel = this.channels.get(table);
             if (channel) {
-                supabase.removeChannel(channel);
+                supabaseClient.removeChannel(channel);
                 this.channels.delete(table);
             }
         }
@@ -1669,9 +1669,9 @@ const WidgetService = {
 // ============================================
 const AuditLog = {
     async log(action, details = {}) {
-        const user = supabase.auth.getUser();
+        const user = supabaseClient.auth.getUser();
         
-        await supabase.from('audit_logs').insert({
+        await supabaseClient.from('audit_logs').insert({
             user_id: user?.data?.user?.id,
             action,
             details,
@@ -1758,11 +1758,7 @@ const ToastContext = createContext({ showToast: () => {} });
 const NavigationContext = createContext({ currentPage: 'dashboard', setCurrentPage: () => {} });
 
 console.log('✅ StockApp v8.0 Services loaded');
-</script>
-</body>
-</html>
 
-<script>
 // ============================================
 // CUSTOM HOOKS
 // ============================================
@@ -1829,7 +1825,7 @@ const useRealtime = (tables, callback) => {
         const channels = [];
         
         tables.forEach(table => {
-            const channel = supabase
+            const channel = supabaseClient
                 .channel(`realtime:${table}`)
                 .on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
                     callback(table, payload);
@@ -1842,7 +1838,7 @@ const useRealtime = (tables, callback) => {
         });
         
         return () => {
-            channels.forEach(channel => supabase.removeChannel(channel));
+            channels.forEach(channel => supabaseClient.removeChannel(channel));
         };
     }, [tables.join(',')]);
     
@@ -2302,9 +2298,7 @@ const SearchInput = memo(({ value, onChange, placeholder = 'Rechercher...', debo
 });
 
 console.log('✅ StockApp v8.0 Components loaded');
-</script>
 
-<script>
 // ============================================
 // NAVIGATION COMPONENTS
 // ============================================
@@ -2679,9 +2673,7 @@ const ShortcutsHelp = memo(({ isOpen, onClose }) => {
 });
 
 console.log('✅ StockApp v8.0 Navigation Components loaded');
-</script>
 
-<script>
 // ============================================
 // DASHBOARD COMPONENTS
 // ============================================
@@ -3129,9 +3121,7 @@ const DashboardPage = memo(({ data, user, onNavigate, showToast, loading }) => {
 });
 
 console.log('✅ StockApp v8.0 Dashboard loaded');
-</script>
 
-<script>
 // ============================================
 // PLACEHOLDER PAGES (to be expanded)
 // ============================================
@@ -3458,9 +3448,7 @@ const PlaceholderPage = memo(({ title, icon }) => {
 });
 
 console.log('✅ StockApp v8.0 Pages loaded');
-</script>
 
-<script>
 // ============================================
 // CHAT COMPONENT (WhatsApp Style)
 // ============================================
@@ -3833,9 +3821,7 @@ const OnboardingTour = memo(({ isOpen, onComplete }) => {
 });
 
 console.log('✅ StockApp v8.0 Panels loaded');
-</script>
 
-<script>
 // ============================================
 // MAIN APP COMPONENT
 // ============================================
@@ -3884,7 +3870,7 @@ const App = () => {
     useEffect(() => {
         const checkAuth = async () => {
             try {
-                const { data: { session } } = await supabase.auth.getSession();
+                const { data: { session } } = await supabaseClient.auth.getSession();
                 if (session?.user) {
                     // Get user profile
                     const { data: profile } = await supabase
@@ -3911,7 +3897,7 @@ const App = () => {
         checkAuth();
         
         // Listen for auth changes
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+        const { data: { subscription } } = supabaseClient.auth.onAuthStateChange(async (event, session) => {
             if (event === 'SIGNED_IN' && session?.user) {
                 const { data: profile } = await supabase
                     .from('users')
@@ -3946,15 +3932,15 @@ const App = () => {
                     { data: users },
                     { data: categories }
                 ] = await Promise.all([
-                    supabase.from('tasks').select('*').order('created_at', { ascending: false }),
-                    supabase.from('parts').select('*').order('name'),
-                    supabase.from('orders').select('*').order('created_at', { ascending: false }),
-                    supabase.from('requests').select('*').order('created_at', { ascending: false }),
-                    supabase.from('equipements').select('*').order('nom'),
-                    supabase.from('pannes').select('*').order('date_signalement', { ascending: false }),
-                    supabase.from('entretiens').select('*').order('date_planifiee', { ascending: false }),
-                    supabase.from('users').select('*'),
-                    supabase.from('categories').select('*').order('name')
+                    supabaseClient.from('tasks').select('*').order('created_at', { ascending: false }),
+                    supabaseClient.from('parts').select('*').order('name'),
+                    supabaseClient.from('orders').select('*').order('created_at', { ascending: false }),
+                    supabaseClient.from('requests').select('*').order('created_at', { ascending: false }),
+                    supabaseClient.from('equipements').select('*').order('nom'),
+                    supabaseClient.from('pannes').select('*').order('date_signalement', { ascending: false }),
+                    supabaseClient.from('entretiens').select('*').order('date_planifiee', { ascending: false }),
+                    supabaseClient.from('users').select('*'),
+                    supabaseClient.from('categories').select('*').order('name')
                 ]);
                 
                 dispatch({
@@ -4020,7 +4006,7 @@ const App = () => {
         const channels = [];
         
         tables.forEach(table => {
-            const channel = supabase
+            const channel = supabaseClient
                 .channel(`realtime:${table}:${user.id}`)
                 .on('postgres_changes', 
                     { event: '*', schema: 'public', table },
@@ -4095,7 +4081,7 @@ const App = () => {
         
         // Cleanup
         return () => {
-            channels.forEach(channel => supabase.removeChannel(channel));
+            channels.forEach(channel => supabaseClient.removeChannel(channel));
         };
     }, [user]);
     
@@ -4373,7 +4359,7 @@ const LoginPage = memo(({ onLogin, showToast }) => {
         setLoading(true);
         
         try {
-            const { data, error } = await supabase.auth.signInWithPassword({
+            const { data, error } = await supabaseClient.auth.signInWithPassword({
                 email,
                 password
             });
