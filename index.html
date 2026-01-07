@@ -988,8 +988,8 @@ body {
 // CONFIGURATION
 // ============================================
 const CONFIG = {
-    SUPABASE_URL: 'https://fgyxinizcaghcjuwrkyp.supabase.co',
-    SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZneXhpbml6Y2FnaGNqdXdya3lwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NjEwODc2MCwiZXhwIjoyMDgxNjg0NzYwfQ.q1UO1N-eLBfFK_8qWbWarsK-ctiFo-A4CHproDbQGsM',
+    SUPABASE_URL: 'https://xxxxx.supabase.co',
+    SUPABASE_ANON_KEY: 'xxxxx',
     APP_VERSION: '8.0.0',
     CACHE_TTL: 5 * 60 * 1000, // 5 minutes
     DEBOUNCE_DELAY: 300,
@@ -1006,9 +1006,34 @@ const { useState, useEffect, useMemo, useCallback, useRef, useReducer, createCon
 const h = React.createElement;
 
 // ============================================
-// SUPABASE CLIENT
+// SUPABASE CLIENT (ou mock en mode demo)
 // ============================================
-const supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+const IS_DEMO_MODE = CONFIG.SUPABASE_URL.includes('xxxxx');
+
+// Mock Supabase pour le mode demo
+const supabaseMock = {
+    from: () => ({
+        select: () => ({ order: () => ({ data: [], error: null }), eq: () => ({ single: () => ({ data: null, error: null }) }), data: [], error: null }),
+        insert: () => ({ data: null, error: null }),
+        update: () => ({ eq: () => ({ data: null, error: null }) }),
+        delete: () => ({ eq: () => ({ data: null, error: null }) })
+    }),
+    auth: {
+        getSession: async () => ({ data: { session: null }, error: null }),
+        getUser: async () => ({ data: { user: null }, error: null }),
+        signInWithPassword: async () => ({ data: null, error: { message: 'Mode demo - utilisez le bouton Demo' } }),
+        signOut: async () => ({ error: null }),
+        onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } })
+    },
+    channel: () => ({
+        on: () => ({ subscribe: () => {} })
+    }),
+    removeChannel: () => {}
+};
+
+const supabaseClient = IS_DEMO_MODE 
+    ? supabaseMock 
+    : window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
 
 // ============================================
 // UTILITIES
@@ -3868,12 +3893,18 @@ const App = () => {
     
     // ============ AUTH CHECK ============
     useEffect(() => {
+        // En mode demo, pas de verification auth
+        if (IS_DEMO_MODE) {
+            setAuthLoading(false);
+            return;
+        }
+        
         const checkAuth = async () => {
             try {
                 const { data: { session } } = await supabaseClient.auth.getSession();
                 if (session?.user) {
                     // Get user profile
-                    const { data: profile } = await supabase
+                    const { data: profile } = await supabaseClient
                         .from('users')
                         .select('*')
                         .eq('id', session.user.id)
@@ -3899,7 +3930,7 @@ const App = () => {
         // Listen for auth changes
         const { data: { subscription } } = supabaseClient.auth.onAuthStateChange(async (event, session) => {
             if (event === 'SIGNED_IN' && session?.user) {
-                const { data: profile } = await supabase
+                const { data: profile } = await supabaseClient
                     .from('users')
                     .select('*')
                     .eq('id', session.user.id)
@@ -3913,6 +3944,56 @@ const App = () => {
         return () => subscription.unsubscribe();
     }, []);
     
+    // ============ DEMO DATA ============
+    const DEMO_DATA = {
+        categories: [
+            { id: 'cat-1', name: 'Pièces mécaniques', color: '#3B82F6', icon: '⚙️' },
+            { id: 'cat-2', name: 'Électronique', color: '#10B981', icon: '🔌' },
+            { id: 'cat-3', name: 'Sécurité', color: '#F59E0B', icon: '🔒' },
+            { id: 'cat-4', name: 'Hydraulique', color: '#8B5CF6', icon: '💧' }
+        ],
+        parts: [
+            { id: 'part-1', name: 'Câble de traction 8mm', reference: 'CAB-TR-008', category_id: 'cat-1', quantity: 45, min_stock: 20, price: 125.50, location: 'A1-01', supplier: 'Otis' },
+            { id: 'part-2', name: 'Contacteur de porte', reference: 'CTR-PT-001', category_id: 'cat-2', quantity: 8, min_stock: 10, price: 89.00, location: 'B2-03', supplier: 'Schindler' },
+            { id: 'part-3', name: 'Bouton appel cabine', reference: 'BTN-CAB-01', category_id: 'cat-2', quantity: 32, min_stock: 15, price: 45.00, location: 'B2-05', supplier: 'ThyssenKrupp' },
+            { id: 'part-4', name: 'Huile hydraulique 5L', reference: 'HYD-OIL-5L', category_id: 'cat-4', quantity: 3, min_stock: 5, price: 78.00, location: 'C1-02', supplier: 'Total' },
+            { id: 'part-5', name: 'Photocellule sécurité', reference: 'SEC-PHO-01', category_id: 'cat-3', quantity: 12, min_stock: 8, price: 156.00, location: 'A2-04', supplier: 'Kone' },
+            { id: 'part-6', name: 'Variateur de fréquence', reference: 'VAR-FRQ-01', category_id: 'cat-2', quantity: 2, min_stock: 3, price: 890.00, location: 'D1-01', supplier: 'ABB' },
+            { id: 'part-7', name: 'Amortisseur de fosse', reference: 'AMO-FOS-01', category_id: 'cat-3', quantity: 6, min_stock: 4, price: 320.00, location: 'C2-03', supplier: 'Otis' },
+            { id: 'part-8', name: 'Guide cabine', reference: 'GUI-CAB-01', category_id: 'cat-1', quantity: 18, min_stock: 10, price: 65.00, location: 'A1-03', supplier: 'Schindler' }
+        ],
+        tasks: [
+            { id: 'task-1', type: 'Maintenance', description: 'Entretien préventif ascenseur', location: 'Résidence Les Cerisiers', status: 'en_cours', priority: 'normale', scheduled_date: new Date().toISOString().split('T')[0], assigned_to: 'demo-user-001' },
+            { id: 'task-2', type: 'Dépannage', description: 'Porte cabine bloquée', location: 'Immeuble Voltaire', status: 'nouveau', priority: 'urgente', due_date: new Date().toISOString().split('T')[0], assigned_to: 'demo-user-001' },
+            { id: 'task-3', type: 'Installation', description: 'Pose nouveau variateur', location: 'Clinique St Jean', status: 'en_attente', priority: 'haute', scheduled_date: new Date(Date.now() + 86400000).toISOString().split('T')[0] },
+            { id: 'task-4', type: 'Contrôle', description: 'Vérification quinquennale', location: 'Mairie Annexe', status: 'termine', priority: 'normale', completed_date: new Date(Date.now() - 86400000).toISOString() },
+            { id: 'task-5', type: 'Dépannage', description: 'Alarme cabine défectueuse', location: 'Centre Commercial Jaude', status: 'nouveau', priority: 'critique', due_date: new Date().toISOString().split('T')[0] }
+        ],
+        orders: [
+            { id: 'order-1', reference: 'CMD-20260107-0001', supplier: 'Otis', status: 'en-commande', total_amount: 1250.00, expected_date: new Date(Date.now() + 604800000).toISOString().split('T')[0], items: [{ part_id: 'part-1', quantity: 10 }] },
+            { id: 'order-2', reference: 'CMD-20260105-0001', supplier: 'Schindler', status: 'expedie', total_amount: 890.00, items: [{ part_id: 'part-2', quantity: 10 }] }
+        ],
+        requests: [
+            { id: 'req-1', type: 'Dépannage', title: 'Ascenseur bloqué', description: 'Ascenseur bloqué au 3ème étage', status: 'nouveau', priority: 'urgente', sector: 'Clermont-Nord', location: 'Résidence du Parc' },
+            { id: 'req-2', type: 'Information', title: 'Demande devis modernisation', description: 'Client souhaite moderniser son ascenseur', status: 'en_cours', priority: 'normale', sector: 'Clermont-Sud', location: 'Cabinet Médical Blatin' }
+        ],
+        equipements: [
+            { id: 'equip-1', nom: 'ASC-001', immeuble: 'Résidence Les Cerisiers', adresse: '12 rue des Fleurs', ville: 'Clermont-Ferrand', secteur: 'Clermont-Nord', client: 'Syndic ABC', marque: 'Otis', modele: 'Gen2', annee_installation: 2015, statut: 'actif', en_panne: false, prochain_entretien: new Date(Date.now() + 604800000).toISOString().split('T')[0], score_ml: 25 },
+            { id: 'equip-2', nom: 'ASC-002', immeuble: 'Immeuble Voltaire', adresse: '45 av. Voltaire', ville: 'Clermont-Ferrand', secteur: 'Clermont-Nord', client: 'Copro Voltaire', marque: 'Schindler', modele: '3300', annee_installation: 2008, statut: 'arret', en_panne: true, score_ml: 78 },
+            { id: 'equip-3', nom: 'ASC-003', immeuble: 'Clinique St Jean', adresse: '8 rue St Jean', ville: 'Clermont-Ferrand', secteur: 'Clermont-Sud', client: 'Clinique St Jean', marque: 'Kone', modele: 'MonoSpace', annee_installation: 2020, statut: 'actif', en_panne: false, prochain_controle: new Date(Date.now() + 2592000000).toISOString().split('T')[0], score_ml: 12 }
+        ],
+        pannes: [
+            { id: 'panne-1', equipement_id: 'equip-2', date_signalement: new Date().toISOString(), statut: 'signalee', type_panne: 'Mécanique', description: 'Porte palière bloquée', signale_par: 'Gardien' }
+        ],
+        entretiens: [
+            { id: 'entr-1', equipement_id: 'equip-1', type_entretien: 'preventif', date_planifiee: new Date(Date.now() + 604800000).toISOString().split('T')[0], statut: 'planifie', technicien_id: 'demo-user-001' }
+        ],
+        users: [
+            { id: 'demo-user-001', email: 'demo@stockapp.fr', first_name: 'Nicolas', last_name: 'Demo', role: 'admin', is_active: true },
+            { id: 'demo-user-002', email: 'tech@stockapp.fr', first_name: 'Pierre', last_name: 'Martin', role: 'technicien', is_active: true }
+        ]
+    };
+    
     // ============ INITIAL DATA LOAD ============
     useEffect(() => {
         if (!user) return;
@@ -3920,6 +4001,24 @@ const App = () => {
         const loadData = async () => {
             dispatch({ type: 'SET_LOADING', payload: true });
             
+            // Mode demo - utiliser les donnees locales
+            if (IS_DEMO_MODE || user.id === 'demo-user-001') {
+                dispatch({
+                    type: 'SET_DATA',
+                    payload: {
+                        ...DEMO_DATA,
+                        loading: false
+                    }
+                });
+                
+                // Analyze data for AI suggestions
+                AIAssistant.analyze(DEMO_DATA);
+                
+                console.log('✅ Demo data loaded');
+                return;
+            }
+            
+            // Mode production - charger depuis Supabase
             try {
                 const [
                     { data: tasks },
@@ -4356,6 +4455,13 @@ const LoginPage = memo(({ onLogin, showToast }) => {
     
     const handleSubmit = async (e) => {
         e.preventDefault();
+        
+        // Si mode demo, utiliser le login demo
+        if (IS_DEMO_MODE) {
+            handleDemoLogin();
+            return;
+        }
+        
         setLoading(true);
         
         try {
@@ -4367,7 +4473,7 @@ const LoginPage = memo(({ onLogin, showToast }) => {
             if (error) throw error;
             
             // Get user profile
-            const { data: profile } = await supabase
+            const { data: profile } = await supabaseClient
                 .from('users')
                 .select('*')
                 .eq('id', data.user.id)
@@ -4386,12 +4492,15 @@ const LoginPage = memo(({ onLogin, showToast }) => {
     // Demo login
     const handleDemoLogin = () => {
         onLogin({
-            id: 'demo',
+            id: 'demo-user-001',
             email: 'demo@stockapp.fr',
-            first_name: 'Demo',
-            last_name: 'User',
-            role: 'admin'
+            first_name: 'Nicolas',
+            last_name: 'Demo',
+            role: 'admin',
+            sectors: ['Clermont-Nord', 'Clermont-Sud'],
+            is_active: true
         });
+        playSound('success');
     };
     
     return h('div', {
